@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import font as tkFont
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 import random
 import math
 import numpy as np
@@ -10,6 +10,7 @@ import struct
 import socket
 import threading
 import time
+import csv
 from ag_uc2_8 import PiezoUC28
 
 # Create a lookup table for sin and cos values for angles in the range [0, 360] with 0.1 degree intervals
@@ -35,17 +36,28 @@ class IntensityMapGUI:
         self.move_y_value = 0
 
         self.axes = ["X-", "X+", "Y-", "Y+"]
-        self.step_amplitude = [ tk.StringVar(value="28"),
-                                tk.StringVar(value="24"),
+        self.step_amplitude = [ tk.StringVar(value="27"),
+                                tk.StringVar(value="26"),
                                 tk.StringVar(value="27"),
-                                tk.StringVar(value="23")]
+                                tk.StringVar(value="22")]
         self.step_amplitude_entries = [None, None, None, None]
-        self.scaling_factor = [ tk.StringVar(value="0.09"),
-                                tk.StringVar(value="0.09"),
-                                tk.StringVar(value="0.08"),
-                                tk.StringVar(value="0.08")]
-        self.skew = tk.StringVar(value='0')
+        self.unit_step = [ tk.StringVar(value="4"),
+                            tk.StringVar(value="4"),
+                            tk.StringVar(value="4"),
+                            tk.StringVar(value="4")]
+        self.unit_step_entries = [None, None, None, None]
+        self.num_step = [ tk.StringVar(value="27"),
+                          tk.StringVar(value="20"),
+                          tk.StringVar(value="23"),
+                          tk.StringVar(value="22")]
+        self.num_step_entries = [None, None, None, None]
+        self.move_button = [None, None, None, None]
+        self.scaling_factor = [ tk.StringVar(value="0.12"),
+                                tk.StringVar(value="0.12"),
+                                tk.StringVar(value="0.12"),
+                                tk.StringVar(value="0.12")]
         self.scaling_factor_entries = [None, None, None, None]
+        self.skew = tk.StringVar(value='0')
         self.scaling_locked = True
 
         self.is_running = False
@@ -89,13 +101,13 @@ class IntensityMapGUI:
         self.group = tk.IntVar(value=4)
         self.cursor_x = tk.StringVar(value='0.00')
         self.cursor_y = tk.StringVar(value='0.00')
-        self.intensity = tk.IntVar(value=0)
+        self.intensity = tk.StringVar(value='0')
         self.move_x = tk.StringVar(value='0.00')
         self.move_y = tk.StringVar(value='0.00')
         self.rotate = tk.StringVar(value='0.00')
         self.acq_time = tk.StringVar(value='10')
         self.step_z = tk.StringVar(value='5')
-        self.step = tk.StringVar(value='1')
+        self.step = tk.StringVar(value='0.2')
         self.frame = tk.StringVar(value='10')
 
         # Variables for server IPs and Ports
@@ -110,16 +122,9 @@ class IntensityMapGUI:
 
     def setup_plot(self):
         self.fig, self.ax = plt.subplots(figsize=(5, 5))
-
-        #frame = self.distance_to_step(int(self.frame.get()))
-        #step = self.distance_to_step(float(self.step.get()))
-        #frame_size = int(frame/step)
         frame_size = round(float(self.frame.get())/float(self.step.get()))
 
-        #self.ax.set_xlim(-0.5, frame_size-0.5)
-        #self.ax.set_ylim(frame_size-0.5, -0.5)
-        #print("Frame size: " + str(frame_size))
-        self.default_intensity = np.zeros((frame_size, frame_size))
+        self.default_intensity = np.zeros((frame_size, frame_size), dtype=int)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.scan_tab)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         extent = [-0.5, frame_size - 0.5, frame_size - 0.5, -0.5]
@@ -130,11 +135,13 @@ class IntensityMapGUI:
         self.crosshair, = self.ax.plot([], [], color='blue', marker='+', markeredgewidth=5, markersize=20)
 
     def setup_controls(self):
-        #self.start_button = tk.Button(self.root, text="Start", bg="green", font=self.arrial18, command=self.toggle_plotting)
-        self.start_button = tk.Button(self.scan_tab, text="Start", bg="green", font=self.arrial18, command=self.toggle_plotting)
-        self.start_button.pack(side=tk.TOP, pady=10)
-        self.save_button = tk.Button(self.root, text="Save", font=self.arial14, command=self.save_data)
-        self.save_button.pack(side=tk.TOP, pady=10)
+        self.button_frame = tk.Frame(self.scan_tab)
+        self.button_frame.pack(side=tk.TOP, pady=10)
+        self.start_button = tk.Button(self.button_frame, text="Start", bg="green", font=self.arrial18, command=self.toggle_plotting)
+        self.start_button.pack(side=tk.LEFT, pady=10)        
+        self.save_button = tk.Button(self.button_frame, text="Save", font=self.arrial18, command=self.save_data)
+        self.save_button.pack(side=tk.LEFT, pady=10)
+
         self.setup_status_panel()
         self.setup_input_panel()
         self.setup_server_inputs()
@@ -224,10 +231,12 @@ class IntensityMapGUI:
             # Update the button label depending on the current state
             self.start_button.config(text="Start", font=self.arrial18, bg="green")
 
-    def build_calibration_tab(self):        
+    def build_calibration_tab(self):
         self.lock_button = tk.Button(self.calibration_tab, text="Unlock", font=self.arrial18, width=6, command=lambda: self.toggle_scaling_lock()).grid(row=0, column=0, padx=0, pady=5, sticky="nsew")
         tk.Label(self.calibration_tab, text="Step Amplitude", width = 12, font=self.arrial18).grid(row=1, column=0, padx=0, pady=5, sticky="e")
-        tk.Label(self.calibration_tab, text="Scaling Factor", width = 12, font=self.arrial18).grid(row=2, column=0, padx=0, pady=5, sticky="e")
+        tk.Label(self.calibration_tab, text="Unit Steps", width = 12, font=self.arrial18).grid(row=2, column=0, padx=0, pady=5, sticky="e")
+        tk.Label(self.calibration_tab, text="N# Unit Steps", width = 12, font=self.arrial18).grid(row=3, column=0, padx=0, pady=5, sticky="e")
+        tk.Label(self.calibration_tab, text="Scaling Factor", width = 12, font=self.arrial18).grid(row=5, column=0, padx=0, pady=5, sticky="e")
 
         for i, axis in enumerate(self.axes):
             tk.Label(self.calibration_tab, text=axis, width = 3, font=self.arrial18).grid(row=0, column=i+1, padx=10, pady=5, sticky="nsew")
@@ -235,13 +244,25 @@ class IntensityMapGUI:
             self.step_amplitude_entries[i].grid(row=1, column=i+1, padx=10, pady=5, sticky="nsew")
             self.step_amplitude_entries[i].config(state='disabled')
 
+            self.unit_step_entries[i] = tk.Entry(self.calibration_tab, textvariable=self.unit_step[i], font=self.arrial18, width=3)
+            self.unit_step_entries[i].grid(row=2, column=i+1, padx=10, pady=5, sticky="nsew")
+            self.unit_step_entries[i].config(state='disabled')
+
+            self.num_step_entries[i] = tk.Entry(self.calibration_tab, textvariable=self.num_step[i], font=self.arrial18, width=3)
+            self.num_step_entries[i].grid(row=3, column=i+1, padx=10, pady=5, sticky="nsew")
+            self.num_step_entries[i].config(state='disabled')
+
+            self.move_button[i] = tk.Button(self.calibration_tab, text="Go", font=self.arrial18, width=3, command=lambda i=i: self.calib_move(i))
+            self.move_button[i].grid(row=4, column=i+1, padx=10, pady=5, sticky="nsew")
+            self.move_button[i].config(state='disabled')
+
             self.scaling_factor_entries[i] = tk.Entry(self.calibration_tab, textvariable=self.scaling_factor[i], font=self.arrial18, width=3)
-            self.scaling_factor_entries[i].grid(row=2, column=i+1, padx=10, pady=5, sticky="nsew")
+            self.scaling_factor_entries[i].grid(row=5, column=i+1, padx=10, pady=5, sticky="nsew")
             self.scaling_factor_entries[i].config(state='disabled')
-            
-        tk.Label(self.calibration_tab, text="Skew Correction", width = 12, font=self.arrial18).grid(row=3, column=0, padx=0, pady=5, sticky="e")
+
+        tk.Label(self.calibration_tab, text="Skew Correction", width = 12, font=self.arrial18).grid(row=6, column=0, padx=0, pady=5, sticky="e")
         self.skew_entries = tk.Entry(self.calibration_tab, textvariable=self.skew, font=self.arrial18, width=3)
-        self.skew_entries.grid(row=3, column=1, padx=10, pady=5, sticky="nsew")
+        self.skew_entries.grid(row=6, column=1, padx=10, pady=5, sticky="nsew")
         self.skew_entries.config(state='disabled')
 
     def toggle_scaling_lock(self):
@@ -250,6 +271,9 @@ class IntensityMapGUI:
             #self.lock_button.config(text="Lock")
             for i, axis in enumerate(self.axes):
                 self.step_amplitude_entries[i].config(state='normal')
+                self.unit_step_entries[i].config(state='normal')
+                self.num_step_entries[i].config(state='normal')
+                self.move_button[i].config(state='normal')
                 self.scaling_factor_entries[i].config(state='normal')
                 self.skew_entries.config(state='normal')
         else:
@@ -257,6 +281,9 @@ class IntensityMapGUI:
             #self.lock_button.config(text="Unlock")
             for i, axis in enumerate(self.axes):
                 self.step_amplitude_entries[i].config(state='disabled')
+                self.unit_step_entries[i].config(state='disabled')
+                self.num_step_entries[i].config(state='disabled')
+                self.move_button[i].config(state='disabled')
                 self.scaling_factor_entries[i].config(state='disabled')
                 self.skew_entries.config(state='disabled')
                 self.piezo.set_remote_mode()
@@ -270,6 +297,30 @@ class IntensityMapGUI:
                 elif i == 3:
                     self.piezo.set_step_amplitude_positive(2,int(self.step_amplitude[i].get()))
                 self.piezo.set_local_mode()
+
+    def calib_move(self, i):
+        acq_time = int(self.acq_time.get()) / 1000
+        num_iterations = int(self.num_step[i].get())
+        if i == 0:
+            self.piezo.set_step_amplitude_negative(1,int(self.step_amplitude[i].get()))
+            for _ in range(num_iterations): 
+                self.piezo.relative_move(1, -1*int(self.unit_step[i].get()))
+                time.sleep(acq_time)
+        elif i == 1:
+            self.piezo.set_step_amplitude_positive(1,int(self.step_amplitude[i].get()))
+            for _ in range(num_iterations):
+                self.piezo.relative_move(1, int(self.unit_step[i].get()))
+                time.sleep(acq_time)
+        elif i == 2:
+            self.piezo.set_step_amplitude_negative(2,int(self.step_amplitude[i].get()))
+            for _ in range(num_iterations):
+                self.piezo.relative_move(2, -1*int(self.unit_step[i].get()))
+                time.sleep(acq_time)
+        elif i == 3:
+            self.piezo.set_step_amplitude_positive(2,int(self.step_amplitude[i].get()))
+            for _ in range(num_iterations):
+                self.piezo.relative_move(2, int(self.unit_step[i].get()))
+                time.sleep(acq_time)
 
     def step_to_distance_x(self, step):
         """Convert steps to micrometers."""
@@ -293,7 +344,6 @@ class IntensityMapGUI:
         move_x = float(self.move_x.get())
         move_y = float(self.move_y.get())
         frame_size = round(float(self.frame.get())/float(self.step.get()))
-        #print("frame_size: " + str(frame_size))
         step_x = round(self.distance_to_step_x(float(self.step.get())))
         step_y = round(self.distance_to_step_y(float(self.step.get())))
         acq_time = int(self.acq_time.get()) / 1000  # Convert ms to seconds
@@ -310,7 +360,7 @@ class IntensityMapGUI:
             self.piezo.set_step_amplitude_positive(1,int(self.step_amplitude[1].get()))
             self.piezo.set_step_amplitude_negative(2,int(self.step_amplitude[2].get()))
             self.piezo.set_step_amplitude_positive(2,int(self.step_amplitude[3].get()))
-            time.sleep(acq_time*60)
+            time.sleep(acq_time*10)
             
             while self.client1_running:
                 #print("tcp_client1 is running")
@@ -318,19 +368,15 @@ class IntensityMapGUI:
                     for y in range(frame_size):
                         self.index_y = y
                         if y == 0:
-                            #self.move_x_value = round(frame_size/2)*step
-                            #self.move_y_value = round(frame_size/2)*step
-                            #self.piezo.relative_move(1,int(self.move_x_value*(-1)))
-                            #self.piezo.relative_move(2,int(self.move_y_value))
                             # Apply calibration and rotation for initial positioning
                             move_x_value = self.distance_to_step_x(move_x - (float(self.frame.get())/2))
                             move_y_value = self.distance_to_step_y((float(self.frame.get())/2) - move_y)
                             move_x_corr, move_y_corr = self.skew_and_rotation(-move_x_value, move_y_value)
-                            self.piezo.relative_move(2, round(move_x_corr))
-                            self.piezo.relative_move(1, round(move_y_corr))
+                            #self.piezo.relative_move(2, round(move_x_corr))
+                            #self.piezo.relative_move(1, round(move_y_corr))
+                            self.move_to(move_x_corr, move_y_corr, step_x, step_y)
                             #print("X: 0" + " Y: " + str(y))
                         else: 
-                            #self.piezo.relative_move(2,int(step*(-1)))
                             _, step_y_corr = self.skew_and_rotation(0, -step_y)
                             self.piezo.relative_move(1, round(step_y_corr))
                             #print("Y: " + str(y))
@@ -345,22 +391,18 @@ class IntensityMapGUI:
                         for x in x_range:
                             if not self.client1_running:
                                 break
-                            self.index_x = x                            
-                            #self.cursor_x.set(str(x))
-                            #self.cursor_y.set(str(y))
+                            self.index_x = x
                             self.cursor_x.set(f"{self.step_to_distance_x((x - frame_size/2)*step_x):.1f}")
                             self.cursor_y.set(f"{self.step_to_distance_y((frame_size/2 - y)*step_y):.1f}")
                             
                             if y % 2 == 0: # Left to Right
                                 if x != 0:
-                                    #self.piezo.relative_move(1,int(step))
                                     step_x_corr, _ = self.skew_and_rotation(-step_x, 0)
                                     self.piezo.relative_move(2, round(step_x_corr))
                                     #print("X: " + str(x))
                                     
                             else: # Right to Left
                                 if frame_size-1-x != 0:
-                                    #self.piezo.relative_move(1,int(step*(-1)))
                                     step_x_corr, _ = self.skew_and_rotation(step_x, 0)
                                     self.piezo.relative_move(2, round(step_x_corr))
                                     #print("X: " + str(x))
@@ -368,17 +410,7 @@ class IntensityMapGUI:
                             time.sleep(acq_time)
                             #self.update_plot(x, y, random.randrange(1,100))
                             self.read_apd(x, y)
-                        #cnt = cnt + 1
-                        #if cnt == frame_size:
-                            #if frame % 2 == 0:
-                            #    self.piezo.relative_move(1,int(self.move_x_value))
-                            #else:
-                            #    self.piezo.relative_move(1,int(self.move_x_value*(-1)))
-                            #self.piezo.relative_move(2,int(self.move_y_value))
-                            #x = 0
-                            #y = 0
-                            #cnt = 0
-                    
+
                     self.update_crosshair(x, y)
                     self.send_stop_to_server1()
                     self.piezo.set_local_mode()
@@ -405,11 +437,20 @@ class IntensityMapGUI:
                 intensity_value = struct.unpack('!I', data)[0]
 
                 # Update the plot with the received intensity value for the given (x, y)
-                self.update_plot(x, y, intensity_value)
-                self.intensity.set(int(intensity_value))
+                self.update_plot(x, y, int(intensity_value))
+                self.intensity.set(self.format_intensity(intensity_value))
          
         except Exception as e:
             print(f"Client 2 error: {e}")
+
+    def format_intensity(self, value):
+        """Format an integer into a human-readable string with K or M suffix."""
+        if value >= 1_000_000:
+            return f"{value / 1_000_000:.1f} MCps"  # Display in millions with one decimal place
+        elif value >= 1_000:
+            return f"{value / 1_000:.1f} KCps"  # Display in thousands with one decimal place
+        else:
+            return str(value) + " Cps" # Display as is if less than 1000
 
     def send_start_to_server1(self, binwidth):
         message = f"M{binwidth}M".encode('utf-8')
@@ -474,8 +515,8 @@ class IntensityMapGUI:
             x = round(min(max(event.xdata, 0), frame_size - 1))
             y = round(min(max(event.ydata, 0), frame_size - 1))
 
-            #delta_x = round(self.distance_to_step((x - self.index_x)*(float(self.step.get()))))
-            #delta_y = round(self.distance_to_step((y - self.index_y)*(float(self.step.get()))))
+            step_x = round(self.distance_to_step_x(float(self.step.get())))
+            step_y = round(self.distance_to_step_y(float(self.step.get())))
             delta_x = self.distance_to_step_x((self.index_x - x)*(float(self.step.get())))
             delta_y = self.distance_to_step_y((self.index_y - y)*(float(self.step.get())))
             delta_x, delta_y = self.skew_and_rotation(delta_x, delta_y)
@@ -486,12 +527,26 @@ class IntensityMapGUI:
             #print("Move y:",delta_y)
             self.piezo.set_remote_mode()
             self.piezo.set_channel()
-            self.piezo.relative_move(2,round(delta_x))
-            self.piezo.relative_move(1,round(delta_y))
+            #self.piezo.relative_move(2,round(delta_x))
+            #self.piezo.relative_move(1,round(delta_y))
+            self.move_to(delta_x, delta_y, step_x, step_y)
             self.piezo.set_local_mode()
 
             # Update the crosshair and the cursor positions safely
             self.update_crosshair(x, y)
+
+    def move_to(self, x, y, step_x, step_y):
+        range_x = round(abs(x)/step_x)
+        range_y = round(abs(y)/step_y)
+        sign_x = np.sign(x)
+        sign_y = np.sign(y)
+        acq_time = int(self.acq_time.get()) / 1000  # Convert ms to seconds
+        for x in range(range_x):
+            self.piezo.relative_move(2,round(sign_x*(step_x)))
+            time.sleep(acq_time)
+        for y in range(range_y):
+            self.piezo.relative_move(1,round(sign_y*(step_y)))
+            time.sleep(acq_time)
 
     def on_drag(self, event):
         if event.inaxes and event.button == 1:  # Left click drag
@@ -513,11 +568,9 @@ class IntensityMapGUI:
         frame_size = self.im.get_array().shape[0]/2
         step_x = self.distance_to_step_x(float(self.step.get()))
         step_y = self.distance_to_step_y(float(self.step.get()))
-        #self.cursor_x.set(str(self.step_to_distance((x - frame_size)*step)))
-        #self.cursor_y.set(str(self.step_to_distance((frame_size - y)*step)))
         self.cursor_x.set(f"{self.step_to_distance_x((x - frame_size)*step_x):.1f}")
         self.cursor_y.set(f"{self.step_to_distance_y((frame_size - y)*step_y):.1f}")
-        self.intensity.set(int(self.im.get_array()[y, x]))
+        self.intensity.set(self.format_intensity(self.im.get_array()[y, x]))
 
         # Redraw the canvas with updated crosshair
         self.canvas.draw()
@@ -560,22 +613,10 @@ class IntensityMapGUI:
 
     def save_data(self):
         filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("TXT files", "*.txt")])
-        if filename:
-            # Write the x_data (time) and y_data (temperature) to a TXT file
-            try:
-                with open(filename, mode='w') as file:
-                    # Write the data points, tab-separated (no header)
-                    for x, y in zip(self.x_data, self.y_data):
-                        file.write(f"{x:.2f}\t{y:.2f}\n")
-            except Exception as e:
-                print(f"Error saving data: {e}")
-
-    def save_data(self):
-        filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("TXT files", "*.txt")])
 
         if filename:
             try:
-                intensity_data = self.im.get_array():
+                intensity_data = self.im.get_array()
                 with open(filename, 'w') as f1:
                     writer = csv.writer(f1, delimiter='\t')
                     writer.writerows(intensity_data)
