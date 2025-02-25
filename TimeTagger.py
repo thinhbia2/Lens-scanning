@@ -5,13 +5,13 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import struct
 import socket
+import select
 import threading
 import random
 import time
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import csv
-
 
 def on_closing():
     plt.close('all')  # Close all matplotlib plots
@@ -34,7 +34,7 @@ class MeasurementApp:
 
         self.server_socket = None
         self.client_socket = None
-        self.server_thread = None
+        self.server_thread = False
         self.server_running = False
         
         # Initialize Picoquant
@@ -59,6 +59,8 @@ class MeasurementApp:
         self.default_ref_channel = "Sync"
         self.default_start_channel = "Channel 1"
         self.default_stop_channel = "Channel 2"
+
+        self.time_trace_running = False
         
         self.ip_address = socket.gethostbyname(socket.gethostname())
         
@@ -135,17 +137,17 @@ class MeasurementApp:
         # TCP/IP Settings
         #ip_address = socket.gethostbyname(socket.gethostname())
         ttk.Label(config_frame, text=f"IP: {self.ip_address}").grid(row=row, column=0, padx=10, pady=5, sticky="w")
-        
+
         tcp_enable_button = tk.Button(config_frame, text="Enable/Disable TCP/IP", bg="orange", fg="white", width=20, font=self.arr18, command=lambda: self.toggle_tcp_enable(tcp_enable_button))
         tcp_enable_button.grid(row=row, column=1, padx=10, pady=5)
-        
+
         port_label = ttk.Label(config_frame, text="Port Number")
         port_label.grid(row=row, column=2, padx=10, pady=5, sticky="w")
-        
+
         port_number = ttk.Entry(config_frame, font=self.arr18)
         port_number.grid(row=row, column=3, padx=10, pady=5)
         port_number.insert(0, self.default_port_number)
-        
+
         self.entries.update({
             "port_number": port_number,
         })
@@ -153,18 +155,18 @@ class MeasurementApp:
     def create_time_trace_tab(self, notebook):
         time_trace_frame = ttk.Frame(notebook)
         notebook.add(time_trace_frame, text="Time Trace")
-        
+
         # Input fields
         ttk.Label(time_trace_frame, text="Number of Bins:").grid(row=1, column=0, padx=10, pady=5, sticky="w")
         tt_bin_width = ttk.Entry(time_trace_frame, font=self.arr18)
         tt_bin_width.grid(row=1, column=0, padx=100, pady=5)
         tt_bin_width.insert(0, self.default_bin_width)
-        
+
         ttk.Label(time_trace_frame, text="Window Size (s):").grid(row=2, column=0, padx=10, pady=5, sticky="w")
         tt_window_size = ttk.Entry(time_trace_frame, font=self.arr18)
         tt_window_size.grid(row=2, column=0, padx=100, pady=5)
         tt_window_size.insert(0, self.default_window_size)
-        
+
         ttk.Label(time_trace_frame, text="Acquisition Time (ms):").grid(row=3, column=0, padx=10, pady=5, sticky="w")
         tt_acquisition_time = ttk.Entry(time_trace_frame, font=self.arr18)
         tt_acquisition_time.grid(row=3, column=0, padx=100, pady=5)
@@ -175,11 +177,11 @@ class MeasurementApp:
             "tt_window_size": tt_window_size,
             "tt_acquisition_time": tt_acquisition_time
         })
-        
+
         # Start/Stop Button
         self.time_trace_button = tk.Button(time_trace_frame, text="Start", bg="green", fg="white", width=10, font=self.arr18, command=lambda: self.toggle_start(self.time_trace_button, "time_trace"))
         self.time_trace_button.grid(row=4, column=0, columnspan=2, padx=10, pady=10)
-        
+
         # Plot area (scaled by 2)
         self.fig_time_trace, self.ax_time_trace = plt.subplots(figsize=(15, 9))
         self.canvas_time_trace = FigureCanvasTkAgg(self.fig_time_trace, master=time_trace_frame)
@@ -281,103 +283,116 @@ class MeasurementApp:
 
     # Function to start the TCP/IP server
     def start_tcp_server(self, port):
+        if self.server_running:
+            #print("Server is already running.")
+            return  # Prevent multiple instances
+
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            #self.server_socket.bind(('127.0.0.1', port))
             self.server_socket.bind((self.ip_address, port))
             self.server_socket.listen(5)
             self.server_running = True
-            #print(self.server_running)
-            #print(f"TCP/IP Server started on port {port}")
+            self.allow_connections = True
+            print(f"TCP/IP Server started on port {port}")
 
-            while self.server_running:
-                try:
-                    # Set a timeout to allow regular checking of the server status
-                    self.server_socket.settimeout(1.0)
-                    self.client_socket, addr = self.server_socket.accept()
-                    #print(f"Connection from {addr}")
-                    self.client_socket.settimeout(5.0)  # Timeout for client socket operations
-
-                    while True:
-                        try:
-                            prefix = self.client_socket.recv(1).decode('utf-8')  
-                            #print(f"{data}")
-                            if prefix == 'M':
-                                # Read the rest of the "Mxxxx" message to extract the integer
-                                number_data = bytearray()
-                                while True:
-                                    byte = self.client_socket.recv(1)
-                                    if byte.decode('utf-8') == 'M':  # stop reading at non-digit or connection end  
-                                        break
-                                    number_data.extend(byte)
-                                window = int(number_data.decode('utf-8')) / 1000
-                                self.sn.timeTrace.clearMeasure()                      
-                                self.sn.timeTrace.setNumBins(10)
-                                self.sn.timeTrace.setHistorySize(window)
-                                self.sn.timeTrace.measure(int(self.entries["tt_acquisition_time"].get()), waitFinished=False, savePTU=False)  
-                                self.client_socket.sendall(b'OK')
-                            elif prefix == 'D':
-                                counts, times = self.sn.timeTrace.getData()
-                                self.client_socket.sendall(struct.pack('!I', int(counts[1][-1])))
-                            elif prefix == 'S':
-                                self.sn.timeTrace.stopMeasure()
-                                self.sn.timeTrace.clearMeasure()
-                                self.client_socket.sendall(b'OK')
-                        except ConnectionAbortedError as e:
-                            print(f"Connection aborted by client: {e}")
-                            break
-                        except socket.timeout:
-                            # No data received within the timeout, continue checking
-                            continue
-                        except socket.error as e:
-                            print(f"Error receiving data from client: {e}")
-                            break
-                except socket.timeout:
-                    # Check if the server is still running
-                    continue
-                except socket.error as e:
-                    print(f"Server error: {e}")
-                finally:
-                    # Close client socket when done
-                    if self.client_socket:
-                        self.client_socket.close()
-                        self.client_socket = None
+            # Start server loop in a separate thread
+            server_thread = threading.Thread(target=self.server_loop, daemon=True)
+            server_thread.start()
         except Exception as e:
             print(f"Error starting server: {e}")
-        finally:
-            #self.server_running = False
-            #if self.server_socket:
-            #    self.server_socket.close()
-            #    self.server_socket = None
-            #print("TCP/IP Server stopped")
-            print("Losing connection from client, but server still active")
 
-    # Function to stop the TCP/IP server
-    def stop_tcp_server(self):
-        self.sn.timeTrace.stopMeasure()
-        self.sn.timeTrace.clearMeasure()
-        if self.server_running:
-            self.server_running = False
-            print("Stopping TCP/IP server...")
+    def server_loop(self):
+        while self.server_running:
+            if not self.allow_connections:
+                time.sleep(1)  # Prevents unnecessary CPU usage
+                continue  # Skip accepting new clients
+
+            ready, _, _ = select.select([self.server_socket], [], [], 2.0)
+            if ready:
+                try:
+                    self.client_socket, addr = self.server_socket.accept()
+                    print(f"Connection from {addr}")
+                    self.client_socket.settimeout(5.0)
+                    self.handle_client()
+                except socket.error as e:
+                    print(f"Error accepting client: {e}")
+
+    def handle_client(self):
+        try:
+            while self.server_running and self.allow_connections:
+                ready_client, _, _ = select.select([self.client_socket], [], [], 2.0)
+                if ready_client:
+                    prefix = self.client_socket.recv(1).decode('utf-8')
+                    if not prefix:
+                        print("Client disconnected")
+                        break
+
+                    if prefix == 'M':
+                        #print("M_command")
+                        self.handle_M_command()
+                    elif prefix == 'D':
+                        #print("D_command")
+                        self.handle_D_command()
+                    elif prefix == 'S':
+                        #print("S_command")
+                        self.handle_S_command()
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            print(f"Client error: {e}")
+        finally:
+            if self.client_socket:
+                self.client_socket.close()
+                self.client_socket = None
+
+    def handle_M_command(self):
+        # Explicitly stop all ongoing activities and update button states
+        self.stop_measurement("time_trace")
+        self.stop_measurement("histogram")
+        self.stop_measurement("correlation")
+        # Update buttons to reflect stopped state
+        self.time_trace_button.config(text="Start", bg="green")
+        self.histogram_button.config(text="Start", bg="green")
+        self.correlation_button.config(text="Start", bg="green")
+
+        number_data = bytearray()
+        while True:
+            byte = self.client_socket.recv(1)
+            if byte.decode('utf-8') == 'M':  # stop reading at non-digit or connection end  
+                break
+            number_data.extend(byte)
+        number_str = int(number_data.decode('utf-8').strip())
+        window = float(number_str / 20)
+        time.sleep(0.5)
+        self.sn.timeTrace.setNumBins(100)
+        self.sn.timeTrace.setHistorySize(window)
+        self.sn.timeTrace.measure(int(self.entries["tt_acquisition_time"].get()), waitFinished=False, savePTU=False)
+        self.client_socket.sendall(b'OK')
+
+    def handle_D_command(self):
+        counts, times = self.sn.timeTrace.getData()
+        self.client_socket.sendall(struct.pack('!I', int(counts[1][-1])))
+
+    def handle_S_command(self):
+        self.stop_measurement("time_trace")
+        self.client_socket.sendall(b'OK')
 
     # Toggle function that starts or stops the TCP/IP server based on the button state
     def toggle_tcp_enable(self, button):
-        global server_thread
-        
-        port_number = int(self.entries["port_number"].get())  # Get port number from entry widget
 
-        if button["text"] == "Enable TCP/IP":
-            button.config(text="Disable TCP/IP", bg="red")
-            self.stop_tcp_server()  
+        if not self.server_running:
+            # First time clicking: Start the server
+            port_number = int(self.entries["port_number"].get())  # Read port from UI
+            self.start_tcp_server(port_number)
+            button.config(text="Enable TCP/IP", bg="green")
+            self.allow_connections = True
         else:
-            button.config(text="Enable TCP/IP", bg="green")        
+            # Toggle client connection permissions
+            if self.allow_connections:
+                button.config(text="Disable TCP/IP", bg="red")
+                self.allow_connections = False  # Block new client connections
+            else:
+                button.config(text="Enable TCP/IP", bg="green")
+                self.allow_connections = True   # Allow new clients to connect
 
-            # Start the server
-            button["text"] = "Enable TCP/IP"
-            server_thread = threading.Thread(target=self.start_tcp_server, args=(port_number,))
-            server_thread.daemon = True  # Set as daemon so it will close with the main thread
-            server_thread.start()
-        
     def toggle_enable(self, button, trigger_mode, trigger_level, offset, label):
         # Convert label to numeric value using the dictionary
         # Dictionary to map label to corresponding numeric value
@@ -423,8 +438,9 @@ class MeasurementApp:
 
     def start_measurement(self, tab):
         if tab == "time_trace":
+            self.time_trace_running = True
             bin_width = int(self.entries["tt_bin_width"].get())
-            window_size = int(self.entries["tt_window_size"].get())
+            window_size = float(self.entries["tt_window_size"].get())
             acquisition_time = int(self.entries["tt_acquisition_time"].get())
 
             self.sn.timeTrace.clearMeasure()
@@ -442,6 +458,7 @@ class MeasurementApp:
         # Stop the measurement by setting the stop flag
         self.stop_flag = True
         if tab == "time_trace":
+            self.time_trace_running = False
             self.sn.timeTrace.stopMeasure()
             self.sn.timeTrace.clearMeasure()
         elif tab == "histogram":
@@ -452,8 +469,6 @@ class MeasurementApp:
             self.sn.correlation.clearMeasure()           
     
     def measure_time_trace(self):
-        self.stop_flag = False
-        
         counts, times = self.sn.timeTrace.getData()
 
         self.ax_time_trace.clear()
@@ -464,10 +479,11 @@ class MeasurementApp:
         self.ax_time_trace.set_ylabel("Photon Count Rate (Cnt/s)", fontsize=18, fontname='Arial')
         self.ax_time_trace.set_title("Time Trace", fontsize=18, fontname='Arial')
         self.ax_time_trace.tick_params(axis='both', which='major', labelsize=18)
-            
-        while True: 
+
+        while self.time_trace_running:
             finished = self.sn.timeTrace.isFinished()
             counts, times = self.sn.timeTrace.getData()
+            print("still in measure_time_trace")
 
             line.set_data(times, counts[1])
             self.ax_time_trace.relim()
@@ -476,13 +492,13 @@ class MeasurementApp:
 
             # Update the canvas
             self.canvas_time_trace.draw()
-
-            time.sleep(0.1)
-            
-            if finished:
+            time.sleep(0.1)            
+            if finished or not self.time_trace_running:
                 self.time_trace_button.config(text="Start", bg="green")
                 break
-    
+
+        print("out of measure_time_trace")
+        
     def measure_histogram(self):
         self.stop_flag = False
         for i in range(100):  # Simulating 100 data points
