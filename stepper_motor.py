@@ -103,12 +103,33 @@ class NDFilterGUI:
                     direction = 0  # CW
                     steps_to_move = delta_steps
 
+                self.toggle_button.config(state='disabled')
+                self.goto_button.config(text="Moving", bg="red")
+                self.root.update_idletasks()
                 speed = self.map_speed(self.speed_var.get())
                 command = f"SET {speed} {direction} {steps_to_move}\n"
                 self.arduino.write(command.encode())
                 self.arduino.flush()
 
+                deadline = time.time() + 6  # 6-second timeout
+                while time.time() < deadline:
+                    if self.arduino.in_waiting:
+                        response = self.arduino.readline().decode().strip()
+                        if response.startswith("DONE"):
+                            #print("Response from Arduino:", response)
+                            try:
+                                _, current_step = response.split()
+                                #print(f"Current step count: {int(current_step)}")
+                            except ValueError:
+                                print("Malformed DONE response:", response)
+                            break
+                    else:
+                        time.sleep(0.05)  # Avoid CPU spin
+
                 self.current_position_steps = target_steps
+                #print(f"Software step count: {self.current_position_steps}")
+                self.goto_button.config(text="Move", bg="orange")
+                self.toggle_button.config(state='normal')
                 #print(f"Moved to angle: {target_angle:.2f}°, step_angle: {self.step_angle}, steps: {target_steps}, steps_to_move: {steps_to_move}")
 
             except ValueError:
@@ -283,6 +304,7 @@ class NDFilterGUI:
                     self.arduino.flush()
                     self.arduino.write(b"START\n")
                     self.arduino.flush()
+                    self.goto_button.config(state="disabled")
                     self.toggle_button.config(text="Running", bg="red")
                     self.motor_running = True
                     #print("Motor started.")
@@ -293,6 +315,7 @@ class NDFilterGUI:
                     self.arduino.write(b"STOP\n")
                     self.arduino.flush()
                     self.toggle_button.config(text="Start Free Running", bg="green")
+                    self.goto_button.config(state="normal")
                     self.motor_running = False
                     #print("Motor stopped.")
                 except Exception as e:
