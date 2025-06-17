@@ -25,7 +25,7 @@ int step_index = 0;
 long current_position_steps = 0;
 
 // Configurable parameters
-float gear_ratio = 100.0;
+float gear_ratio = 100;
 float full_step_angle = 18.0;
 
 // EEPROM structure
@@ -118,14 +118,13 @@ void loop() {
 			Serial.print(half_step ? 1 : 0);
 			Serial.print(",");
 			Serial.println(current_position_steps);
-		} else if (command == "WRITE") {
-			int p1 = command.indexOf(' ', 11);
+		} else if (command.startsWith("WRITE")) {
+			int p1 = command.indexOf(' ', 6);
 			int p2 = command.indexOf(' ', p1 + 1);
 
-			gear_ratio = command.substring(11, p1).toFloat();
+			gear_ratio = command.substring(6, p1).toFloat();
 			full_step_angle = command.substring(p1 + 1, p2).toFloat();
 			half_step = command.substring(p2 + 1).toInt() > 0;
-
 			saveConfig();
 		} else if (command == "ZERO") {
 			current_position_steps = 0;
@@ -143,7 +142,8 @@ void loop() {
 				running = false;
 				infinite_mode = true;
 				stopMotor();
-				Serial.println("DONE");
+				Serial.print("DONE ");
+				Serial.println(current_position_steps);
 			}
 		}
 	}
