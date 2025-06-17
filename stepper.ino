@@ -1,5 +1,6 @@
 #include <EEPROM.h>
 #include "esp_system.h"
+#include <math.h>  // for lround()
 
 #define IN1 21  // Coil A+
 #define IN2 20  // Coil A-
@@ -184,7 +185,8 @@ void stopMotor() {
 
 long stepsPerRev() {
 	float step_angle = full_step_angle / (half_step ? 2 : 1);
-	return (long)((360.0 / step_angle) * gear_ratio);
+	//return (long)((360.0 / step_angle) * gear_ratio);
+	return lround((360.0 / step_angle) * gear_ratio);
 }
 
 void saveConfig() {
