@@ -73,6 +73,7 @@ class DialCanvas(tk.Canvas):
         self.pointer_len = self.radius * 0.9
         self.left_angle = 205   # degrees (left-bottom)
         self.right_angle = 290   # degrees (right-bottom)
+        self.divided_angle = ((self.right_angle-self.left_angle)/4)%360
         self.current_angle = 0
         self.angle_callback = None
 
@@ -138,36 +139,37 @@ class DialCanvas(tk.Canvas):
         force_direction = None
         
         # Restrict within dial range
-        if angle_deg < self.left_angle:
+        if angle_deg <= self.left_angle or angle_deg >= self.right_angle:
             angle = angle_deg
-        elif angle_deg > self.right_angle:
-            angle = angle_deg
+        elif angle_deg > self.left_angle and angle_deg <= self.left_angle + self.divided_angle:
+            angle = self.left_angle
+        elif angle_deg < self.right_angle and angle_deg >= self.right_angle - self.divided_angle:
+            angle = self.right_angle
 
-        # Check if movement would cross forbidden arc
-        def crosses_forbidden(start, end, ccw=True):
-            """Return True if arc from start→end CCW crosses forbidden zone."""
-            if start > self.right_angle:
-                s = start - 360
-            else:
-                s = start  
-            if end > self.right_angle:
-                e = end - 360
-            else:
-                e = end
-
-            if e > s:
-                return 0
-            elif e < s:
-                return 1
-
-        force_direction = crosses_forbidden(self.current_angle, angle_deg)  
-
+        force_direction = self.crosses_forbidden(self.current_angle, angle)
         # Update pointer
         self.draw_pointer(angle)
 
         # Callback to motor
         if self.angle_callback:
             self.angle_callback(angle, force_direction)
+
+    def convert_angle(self, input_angle):
+        diff = input_angle - self.right_angle
+        if diff < 0:
+            return diff + 360
+        else:
+            return diff
+
+    def crosses_forbidden(self, start, end):
+        s = self.convert_angle(start)
+        e = self.convert_angle(end)
+        print("s:",s, "e:",e)
+
+        if e > s:
+            return 0
+        elif e < s:
+            return 1
 
 class NDFilterGUI:
     def __init__(self, parent_frame):
