@@ -194,6 +194,8 @@ void loop() {
 				motors[id].current_position_steps = 0;
 				saveConfig(id);
 			}
+		} else if (command.startsWith("ID")) {
+			Serial.println("STEPPER");
 		}
 	}
 
