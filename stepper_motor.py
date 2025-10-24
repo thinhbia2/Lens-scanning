@@ -164,7 +164,7 @@ class DialCanvas(tk.Canvas):
     def crosses_forbidden(self, start, end):
         s = self.convert_angle(start)
         e = self.convert_angle(end)
-        print("s:",s, "e:",e)
+        #print("s:",s, "e:",e)
 
         if e > s:
             return 0
@@ -334,47 +334,68 @@ class NDFilterGUI:
     def connect_arduino(self):
         motor = self.motors[0]
         if not self.connected:
-            port = self.port_var.get()
-            if not port:
+
+            selected_port = self.port_var.get()
+            if not selected_port:
                 print("No serial port selected!")
                 return
-            try:
-                self.arduino = serial.Serial(port, self.baud_rate, timeout=1, write_timeout=1)
-                self.connected = True
-                self.connect_button.config(text="Connected", bg="green")
-                self.config_button1.config(state="normal")
-                self.config_button2.config(state="normal")
-                self.config_button3.config(state="normal")
-                self.config_button4.config(state="normal")
-                self.flip_button1.config(state='normal')
-                self.flip_button2.config(state='normal')
-                #for key in ["goto_button", "zero_button", "toggle_button"]:
-                for key in ["goto_button"]:
-                    if key in motor:  # only touch if it exists
-                        motor[key].config(state="normal")
 
-                # Read config for both motors
-                for motor_id in self.motors.keys():
-                    self.request_config(motor_id)
-                    cur_angle = self.step_to_angle(motor_id)
-                    self.motors[motor_id]["goto_angle_var"].set(f"{(cur_angle%360):.1f}")
-                    if motor_id == 0:
-                        self.wheel_canvas.update_angle(self.step_to_angle(0))
-                    elif motor_id == 1:
-                        if cur_angle == 0:
-                            self.flip_button1.config(text="Flip Up", bg="green")
-                        else:
-                            self.flip_button1.config(text="Flip Down", bg="red")
-                    elif motor_id == 2:
-                        if cur_angle == 0:
-                            self.flip_button2.config(text="Flip Up", bg="green")
-                        else:
-                            self.flip_button2.config(text="Flip Down", bg="red")
-                    elif motor_id == 3:
-                        self.dial_canvas.draw_pointer(self.step_to_angle(3))
-                        
-            except serial.SerialException as e:
-                print(f"SerialException: {e}")
+            available_ports = [port.device for port in serial.tools.list_ports.comports()]
+            ports_to_try = []
+            ports_to_try += [p for p in available_ports if p != selected_port]
+
+            for port in ports_to_try:
+                try:
+                    self.arduino = serial.Serial(port, self.baud_rate, timeout=1, write_timeout=1)
+                    try:
+                        if self.read_id() == "STEPPER":
+                            try:
+                                self.connected = True
+                                self.port_var.set(port)
+                                # Read config for both motors
+                                for motor_id in self.motors.keys():
+                                    self.request_config(motor_id)
+                                    cur_angle = self.step_to_angle(motor_id)
+                                    self.motors[motor_id]["goto_angle_var"].set(f"{(cur_angle%360):.1f}")
+                                    if motor_id == 0:
+                                        self.wheel_canvas.update_angle(self.step_to_angle(0))
+                                    elif motor_id == 1:
+                                        if cur_angle == 0:
+                                            self.flip_button1.config(text="Flip Up", bg="green")
+                                        else:
+                                            self.flip_button1.config(text="Flip Down", bg="red")
+                                    elif motor_id == 2:
+                                        if cur_angle == 0:
+                                            self.flip_button2.config(text="Flip Up", bg="green")
+                                        else:
+                                            self.flip_button2.config(text="Flip Down", bg="red")
+                                    elif motor_id == 3:
+                                        self.dial_canvas.draw_pointer(self.step_to_angle(3))
+                                
+                                self.connect_button.config(text="Connected", bg="green")
+                                self.config_button1.config(state="normal")
+                                self.config_button2.config(state="normal")
+                                self.config_button3.config(state="normal")
+                                self.config_button4.config(state="normal")
+                                self.flip_button1.config(state='normal')
+                                self.flip_button2.config(state='normal')
+                                #for key in ["goto_button", "zero_button", "toggle_button"]:
+                                for key in ["goto_button"]:
+                                    if key in motor:  # only touch if it exists
+                                        motor[key].config(state="normal")
+                                break
+                            except Exception as e:
+                                #print(f"Read Configuration failed: {e}")
+                                # Clean up serial connection and exit early
+                                self.arduino.close()
+                                self.arduino = None
+                                self.connected = False
+                                continue
+                    except Exception as e:
+                        continue
+                except serial.SerialException as e:
+                    #print(f"SerialException: {e}")
+                    continue
         else:
             if self.arduino and self.arduino.is_open:
                 try:
@@ -396,6 +417,13 @@ class NDFilterGUI:
                 if key in motor:
                     motor[key].config(state="disabled")
 
+    def read_id(self):
+        cmd = f"ID\n"
+        self.arduino.write(cmd.encode())
+        self.arduino.flush()
+        response = self.arduino.readline().decode().strip()
+        return response
+
     def request_config(self, motor_id):
         if self.connected:
             cmd = f"READ {motor_id}\n"
@@ -410,7 +438,7 @@ class NDFilterGUI:
                 self.motors[motor_id]["current_position_steps"] = int(parts[3])
                 self.update_step_params(motor_id)
             except Exception as e:
-                print(f"Invalid config for motor {motor_id}: {response}")
+                raise RuntimeError(f"Invalid config for motor {motor_id}: {response}") from e
 
     def on_speed_entry_change(self, motor_id, event=None):
         motor = self.motors[motor_id]
