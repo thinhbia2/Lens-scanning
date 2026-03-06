@@ -1,20 +1,14 @@
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
-import sys
-import clr  # clr is part of the pythonnet package
-import os
 import math
-import time
 import serial
+import time
 import threading
-from System.Text import StringBuilder
-import serial.tools.list_ports
 from ctypes import cdll,c_long, c_ulong, c_uint32,byref,create_string_buffer,c_bool,c_char_p,c_int,c_int16,c_double, sizeof, c_voidp
 from TLPMX import TLPMX
 from TLPMX import TLPM_DEFAULT_CHANNEL
-from ag_uc2_8 import PiezoUC28
-from thorlabs_control import KIM001Controller
+import serial.tools.list_ports
 
 class FilterWheelCanvas(tk.Canvas):
     def __init__(self, parent, image_path, size=350, **kwargs):
@@ -191,7 +185,7 @@ class NDFilterGUI:
 
         # Each motor will have its own parameters
         self.motors = {}
-        for motor_id in range(2):
+        for motor_id in range(4):
             self.motors[motor_id] = {
                 "gear_ratio": 100,
                 "full_step_angle": 18.00,
@@ -203,55 +197,32 @@ class NDFilterGUI:
                 "motor_running": False
             }
             self.update_step_params(motor_id)
-        self.motor_speed_lower = 10000
-        self.motor_speed_upper = 1
-        self.pwm_freq = 50000;
-        self.pwm_res = 8;
-        self.pwm_d = 2.0;
-        self.pwm_dmin = 0;
-        self.pwm_dmax = 5;
-
-        self.left_angle = 205   # degrees (left-bottom)
-        self.right_angle = 290   # degrees (right-bottom)
 
         self.tlPM = TLPMX()
-        self.pm16_wavelength = tk.StringVar(value="532")
+        self.pm16_wavelength = tk.StringVar(value="633")
         self.pm16_power = tk.StringVar(value="0.0")
-        self.piezo = PiezoUC28(1)
-        self.ag_uc2_speed_var = tk.DoubleVar(value=20)
-        self.ag_uc2_port_var = tk.StringVar(value="COM2")
-        self.ag_uc2_voltage_lower = 17
-        self.ag_uc2_voltage_upper = 50
-        self.ag_uc2_step_lower = 5
-        self.ag_uc2_step_upper = 2000
-        self.kim001 = KIM001Controller()
-        self.kim001_speed_var = tk.DoubleVar(value=20)
-        self.kim001_step_lower = 10
-        self.kim001_step_upper = 1000
-        self.kim001_step = self.map_speed(self.kim001_speed_var.get(),self.kim001_step_lower,self.kim001_step_upper)
-        self.arduino_port_var = tk.StringVar(value="COM1")
-        self.arduino = None
-        self.ag_uc2_connected = False
-        self.kim001_connected = False
         self.pm16_connected = False
         self.pm16_thread_running = False
-        self.arduino_connected = False
+
+        self.arduino = None
+        self.connected = False
 
         self.build_ui()
 
     # -------- UI --------
     def build_ui(self):
-        # Arduino Serial Port Selection
-        self.arduino_port_label = tk.Label(self.root, text="Arduino Port", font=self.arr18)
-        self.arduino_port_label.grid(row=0, column=0, padx=5, pady=5)
+        # Serial Port Selection
+        self.port_label = tk.Label(self.root, text="COM Port", font=self.arr18)
+        self.port_label.grid(row=0, column=0, padx=5, pady=5)
 
-        self.arduino_port_combobox = ttk.Combobox(self.root, textvariable=self.arduino_port_var, width=6, font=self.arr18)
-        self.arduino_port_combobox.grid(row=0, column=1, padx=5, pady=5)
-        self.arduino_port_combobox.bind("<Button-1>", self.update_ports(self.arduino_port_combobox, self.arduino_port_var))
+        self.port_var = tk.StringVar(value="COM1")
+        self.port_combobox = ttk.Combobox(self.root, textvariable=self.port_var, width=10, font=self.arr18)
+        self.port_combobox.grid(row=0, column=1, padx=5, pady=5)
+        self.port_combobox.bind("<Button-1>", self.update_ports)
 
-        self.arduino_connect_button = tk.Button(self.root, text="Connect", command=self.connect_arduino,
+        self.connect_button = tk.Button(self.root, text="Connect", command=self.connect_arduino,
                                         font=self.arr18, bg="red", fg="white")
-        self.arduino_connect_button.grid(row=0, column=2, padx=5, pady=5)
+        self.connect_button.grid(row=0, column=2, padx=5, pady=5)
 
         # NDF Filter
         self.config_button1 = tk.Button(self.root, text="Config & Ctrl NDF", command=lambda: self.open_config_control(0), font=self.arr18)
@@ -263,14 +234,24 @@ class NDFilterGUI:
         self.config_button2.grid(row=0, column=4, padx=5)
         self.config_button2.config(state='disabled')
 
-        self.flip_button1 = tk.Button(self.root, text="LS Flip", command=lambda: self.flip_angle(motor_id=1,ang=-120), font=self.arr18)
+        self.flip_button1 = tk.Button(self.root, text="LS Flip", command=lambda: self.flip_120(motor_id=1), font=self.arr18)
         self.flip_button1.grid(row=0, column=5, padx=5, pady=5)
         self.flip_button1.config(state='disabled')
-        
-        self.motors[1]["flip_button"] = self.flip_button1
 
-        #PM16-120
-        self.pm16_label = tk.Label(self.root, text="PM16-120", font=self.arr18)
+        # BS Flip
+        self.config_button3 = tk.Button(self.root, text="Config & Ctrl BSFP", command=lambda: self.open_config_control(2), font=self.arr18)
+        self.config_button3.grid(row=1, column=4, padx=5)
+        self.config_button3.config(state='disabled')
+
+        self.flip_button2 = tk.Button(self.root, text="BS Flip", command=lambda: self.flip_120(motor_id=2), font=self.arr18)
+        self.flip_button2.grid(row=1, column=5, padx=5, pady=5)
+        self.flip_button2.config(state='disabled')
+
+        self.motors[1]["flip_button"] = self.flip_button1
+        self.motors[2]["flip_button"] = self.flip_button2
+
+        #PM16-130
+        self.pm16_label = tk.Label(self.root, text="PM16-130", font=self.arr18)
         self.pm16_label.grid(row=1, column=0, padx=5, pady=5)
 
         self.pm16_connect_button = tk.Button(self.root, text="Connect", command=self.connect_pm16,
@@ -278,7 +259,7 @@ class NDFilterGUI:
         self.pm16_connect_button.grid(row=1, column=2, padx=5, pady=5)
 
         # Light adjuster
-        self.config_button4 = tk.Button(self.root, text="Config & Ctrl LGT", command=lambda: self.open_config_pwm(), font=self.arr18)
+        self.config_button4 = tk.Button(self.root, text="Config & Ctrl LGT", command=lambda: self.open_config_control(3), font=self.arr18)
         self.config_button4.grid(row=1, column=3, padx=5)
         self.config_button4.config(state='disabled')
 
@@ -289,104 +270,47 @@ class NDFilterGUI:
         self.wheel_canvas = FilterWheelCanvas(self.root, image_path="ND1.png", size=350)
         self.wheel_canvas.grid(row=5, column=0, columnspan=3, pady=20)
         self.wheel_canvas.angle_callback = self.on_wheel_click
-        #self.wheel_canvas.grid(row=5, column=0, columnspan=3, pady=20)
-        #self.wheel_canvas.angle_callback = self.on_wheel_click
+        self.wheel_canvas.grid(row=5, column=0, columnspan=3, pady=20)
+        self.wheel_canvas.angle_callback = self.on_wheel_click
 
         # Laser power measure
         pm16pad_frame = tk.Frame(self.root)
-        pm16pad_frame.grid(row=5, column=3, sticky=tk.N)  # occupies ONE cell only
+        pm16pad_frame.grid(row=5, column=3, sticky="nw")  # occupies ONE cell only
         self.pm16_wavelength_label = tk.Label(pm16pad_frame, text="Wavelength (nm)", font=self.arr18)
-        self.pm16_wavelength_label.grid(row=1, column=0)
+        self.pm16_wavelength_label.grid(row=1, column=0, sticky="w")
         self.pm16_wavelength_entry = tk.Entry(pm16pad_frame, font=self.arr18, width=5, textvariable=self.pm16_wavelength)
         self.pm16_wavelength_entry.bind("<Return>", self.pm16_wavelength_value_entered)
         self.pm16_wavelength_entry.bind("<FocusOut>", self.pm16_wavelength_value_entered) 
-        self.pm16_wavelength_entry.grid(row=2, column=0, padx=5, sticky=tk.E)
-        tk.Label(pm16pad_frame, text="Power (W):", font=self.arr18).grid(row=3, column=0, sticky=tk.W)
+        self.pm16_wavelength_entry.grid(row=2, column=0, padx=50, sticky="w")
+        tk.Label(pm16pad_frame, text="Power (W):", font=self.arr18).grid(row=3, column=0, sticky="w")
         self.pm16_power_display = tk.Label(pm16pad_frame, textvariable=self.pm16_power, font=self.arr24, width=8)
-        self.pm16_power_display.grid(row=4, column=0, padx=0, sticky="e")
+        self.pm16_power_display.grid(row=4, column=0, padx=0, sticky="w")
 
         # Connect canvas clicks to motor control
         self.dial_label = tk.Label(self.root, text="White Light Dial", font=self.arr18)
-        self.dial_label.grid(row=4, column=4, columnspan=3, pady=(0,0))
+        self.dial_label.grid(row=4, column=3, columnspan=3, pady=(0,0), sticky="s")
         self.dial_canvas = DialCanvas(self.root, size=300)
-        self.dial_canvas.grid(row=5, column=4, columnspan=3, pady=(20,0), sticky="n")
-        self.dial_canvas.angle_callback = self.on_dial_click
-
-        mpad_label_frame = tk.Frame(self.root)
-        mpad_label_frame.grid(row=6, column=0, sticky=tk.N)  # occupies ONE cell only
-        mpad_port_frame = tk.Frame(self.root)
-        mpad_port_frame.grid(row=6, column=1, sticky=tk.N)  # occupies ONE cell only 
-        mpad_connect_frame = tk.Frame(self.root)
-        mpad_connect_frame.grid(row=6, column=2, sticky=tk.N)  # occupies ONE cell only   
-
-        # ag_uc2_8 Serial Port Selection
-        self.ag_uc2_port_label = tk.Label(mpad_label_frame, text="AG-UC2 Port", font=self.arr18)
-        self.ag_uc2_port_label.grid(row=0, column=0, padx=5, pady=5, sticky="n")
-
-        self.ag_uc2_combobox = ttk.Combobox(mpad_port_frame, textvariable=self.ag_uc2_port_var, width=6, font=self.arr18)
-        self.ag_uc2_combobox.grid(row=0, column=0, padx=5, pady=5, sticky="s")
-        self.ag_uc2_combobox.bind("<Button-1>", self.update_ports(self.ag_uc2_combobox, self.ag_uc2_port_var))
-
-        self.ag_uc2_connect_button = tk.Button(mpad_connect_frame, text="Connect", command=self.connect_ag_uc2,
-                                        font=self.arr18, bg="red", fg="white")
-        self.ag_uc2_connect_button.grid(row=0, column=0, padx=5, pady=5, sticky="n")
-
-        # KIM001 Controller
-        self.kim001_label = tk.Label(mpad_label_frame, text="KIM001", font=self.arr18)
-        self.kim001_label.grid(row=1, column=0, padx=5, pady=5, sticky="n")
-
-        self.kim001_connect_button = tk.Button(mpad_connect_frame, text="Connect", command=self.connect_kim001,
-                                        font=self.arr18, bg="red", fg="white")
-        self.kim001_connect_button.grid(row=1, column=0, padx=5, pady=5, sticky="s")
-
-        # XY movement
-        dpad_frame = tk.Frame(self.root)
-        dpad_frame.grid(row=6, column=3)  # occupies ONE cell only
-
-        btn_style = {"font": ("Segoe UI Symbol", 24, "bold"), "width": 3, "height": 0}
-        btn_stop_style = {"font": ("Arial", 24, "bold"), "fg": "red", "width": 3, "height": 1}
-
-        self.btn_up = tk.Button(dpad_frame, text="⬆", command=lambda:self.move_xyz("Y+"), **btn_style)
-        self.btn_up.grid(row=0, column=1, pady=0, sticky="s")
-        self.btn_up.config(state="disabled")
-
-        self.btn_down = tk.Button(dpad_frame, text="⬇", command=lambda:self.move_xyz("Y-"), **btn_style)
-        self.btn_down.grid(row=2, column=1, pady=0, sticky="n")
-        self.btn_down.config(state="disabled")
-
-        self.btn_left = tk.Button(dpad_frame, text="⬅", command=lambda:self.move_xyz("X-"), **btn_style)
-        self.btn_left.grid(row=1, column=0, padx=0, sticky="e")
-        self.btn_left.config(state="disabled")
-
-        self.btn_right = tk.Button(dpad_frame, text="⮕", command=lambda:self.move_xyz("X+"), **btn_style)
-        self.btn_right.grid(row=1, column=2, padx=0, sticky="w")
-        self.btn_right.config(state="disabled")
-        
-        self.btn_stop_xy = tk.Button(dpad_frame, text="●", command=lambda:self.move_xyz("STOPXY"), **btn_stop_style)
-        self.btn_stop_xy.grid(row=1, column=1, ipadx=0, ipady=0)
-        self.btn_stop_xy.config(state="disabled")
-        self.xy_slide = self.speed_slider (self.root, row=7, column=2, motor_id=-1)
-
-        # Z movement
-        zpad_frame = tk.Frame(self.root)
-        zpad_frame.grid(row=6, column=4, sticky="ne")  # occupies ONE cell only
-            
-        z_style = {"font": ("Arial", 24, "bold"), "width": 3, "height": 1}
-        self.btn_z_plus = tk.Button(zpad_frame, text="▲", command=lambda:self.move_xyz("Z+"),**z_style)
-        self.btn_z_plus.grid(row=0, column=0, sticky="s")
-        self.btn_z_plus.config(state="disabled")
-
-        self.btn_z_minus = tk.Button(zpad_frame, text="▼", command=lambda:self.move_xyz("Z-"),**z_style)
-        self.btn_z_minus.grid(row=1, column=0, sticky="n")
-        self.btn_z_minus.config(state="disabled")
-        self.z_slide = self.speed_slider (self.root, row=7, column=4, motor_id=-2)
+        self.dial_canvas.grid(row=5, column=3, columnspan=3, pady=(50,0), sticky="n")
+        self.dial_canvas.angle_callback = self.on_dial_click   
 
     def build_motor_controls(self, parent, motor_id, goto=0, row_start=0):
         motor = self.motors[motor_id]
+
         if goto == 0:
             # Speed Slider and Entry
-            self.speed_slider(parent,row=row_start,motor_id=motor_id)
-            
+            speed_label = tk.Label(parent, text=f"Speed (%)", font=self.arr18).grid(row=row_start, column=0, padx=5, pady=5)
+            speed_slider = tk.Scale(parent, from_=0.0, to=100.0, orient=tk.HORIZONTAL,
+                                    resolution=0.01, font=self.arr18, length=250, variable=motor["speed_var"], showvalue=0)
+            speed_slider.set(100)
+            speed_slider.grid(row=row_start, column=1, columnspan=2, padx=5, pady=5)
+            motor["speed_slider"] = speed_slider
+
+            speed_entry = tk.Entry(parent, textvariable=motor["speed_var"], font=self.arr18, width=6)
+            speed_entry.grid(row=row_start, column=3, padx=5, pady=5)
+            speed_entry.bind("<Return>", lambda e: self.on_speed_entry_change(motor_id))
+            speed_entry.bind("<FocusOut>", lambda e: self.on_speed_entry_change(motor_id))
+            motor["speed_entry"] = speed_entry
+
             # Direction button
             dir_button = tk.Button(parent, text="Forward", font=self.arr18, command=lambda: self.toggle_direction(motor_id))
             dir_button.grid(row=row_start, column=4, columnspan=2, padx=5, pady=5)
@@ -407,7 +331,7 @@ class NDFilterGUI:
         # Go-to angle
         goto_label = tk.Label(parent, text="Go To (°)", font=self.arr18)
         goto_label.grid(row=row_start+2, column=0, padx=5, pady=5)
-        goto_entry = tk.Entry(parent, textvariable=motor["goto_angle_var"], font=self.arr18, width=6)
+        goto_entry = tk.Entry(parent, textvariable=motor["goto_angle_var"], font=self.arr18, width=8)
         goto_entry.grid(row=row_start+2, column=1, padx=5, pady=5)
         motor["goto_entry"] = goto_entry
 
@@ -422,39 +346,7 @@ class NDFilterGUI:
         #    goto_button.config(state='disabled')
         #    zero_button.config(state='disabled')
         #    toggle_button.config(state='disabled')
-    def speed_slider (self, frame, row, column=0, motor_id=0):
-        if motor_id > -1:
-            speed_label = tk.Label(frame, text=f"Speed (%)", font=self.arr18).grid(row=row, column=column, padx=5, pady=5)
-            motor = self.motors[motor_id]
-            speed_slider = tk.Scale(frame, from_=0.0, to=100.0, orient=tk.HORIZONTAL,
-                                resolution=0.01, font=self.arr18, length=250, variable=motor["speed_var"], showvalue=0)
-        elif motor_id == -1:
-            speed_label = tk.Label(frame, font=self.arr18).grid(row=row, column=column, padx=5, pady=5)
-            speed_slider = tk.Scale(frame, from_=0.0, to=100.0, orient=tk.HORIZONTAL,
-                                resolution=0.01, font=self.arr18, length=250, variable=self.ag_uc2_speed_var, showvalue=0)
-        elif motor_id == -2:
-            speed_label = tk.Label(frame, font=self.arr18).grid(row=row, column=column, padx=5, pady=5)
-            speed_slider = tk.Scale(frame, from_=0.0, to=100.0, orient=tk.HORIZONTAL,
-                                resolution=0.01, font=self.arr18, length=250, variable=self.kim001_speed_var, showvalue=0)
-        #speed_slider.set(100)
-        speed_slider.grid(row=row, column=column+1, columnspan=2, padx=5, pady=5, sticky="w")
-        if motor_id > -1:
-            motor["speed_slider"] = speed_slider
-
-        if motor_id > -1:
-            speed_entry = tk.Entry(frame, textvariable=motor["speed_var"], font=self.arr18, width=5)
-            speed_entry.grid(row=row, column=column+3, padx=5, pady=5, sticky="w")
-        elif motor_id == -1:
-            speed_entry = tk.Entry(frame, textvariable=self.ag_uc2_speed_var, font=self.arr18, width=5)
-            speed_entry.grid(row=row, column=column+2, padx=40, pady=5, sticky="w")
-        elif motor_id == -2:
-            speed_entry = tk.Entry(frame, textvariable=self.kim001_speed_var, font=self.arr18, width=5)
-            speed_entry.grid(row=row, column=column+3, padx=0, pady=5, sticky="w")
-        speed_entry.bind("<Return>", lambda e: self.on_speed_entry_change(motor_id))
-        speed_entry.bind("<FocusOut>", lambda e: self.on_speed_entry_change(motor_id))
-        if motor_id > -1:
-            motor["speed_entry"] = speed_entry
-
+ 
     def on_wheel_click(self, angle_deg):
         """Handle user clicking on wheel → move motor to that angle."""
         self.motors[0]["goto_angle_var"].set(f"{(angle_deg%360):.1f}")
@@ -462,139 +354,15 @@ class NDFilterGUI:
 
     def on_dial_click(self, angle_deg, force_direction=None):
         """Move motor according to dial click (only within arc)."""
-        diff = self.left_angle-angle_deg
-        if diff < 0:
-            diff = self.left_angle+ 360-angle_deg
-        transf = diff/(self.left_angle+360-self.right_angle)
-        self.pwm_d = transf*(self.pwm_dmax-self.pwm_dmin)+self.pwm_dmin        
-        if self.arduino_connected:
-            cmd = f"PWM SET {self.pwm_d}\n"
-            self.arduino.write(cmd.encode())
-            self.arduino.flush() 
-    
-    def convert_pwm_to_angle(self):
-        transf = (self.pwm_d-self.pwm_dmin)/(self.pwm_dmax-self.pwm_dmin)
-        angle = transf*(self.left_angle+360-self.right_angle)+self.left_angle
-        if angle > 360:
-            angle = angle - 360
-        return angle
-    
-    def update_ports(self, combobox, variable, event=None):
+        self.motors[3]["goto_angle_var"].set(f"{(angle_deg % 360):.1f}")
+        self.go_to_angle(3, angle=angle_deg, force_direction=force_direction)
+
+    def update_ports(self, event=None):
         ports = [port.device for port in serial.tools.list_ports.comports()]
-        combobox["values"] = ports    
-        if ports and variable.get() not in ports:
-            variable.set(ports[0])
+        self.port_combobox["values"] = ports
+        if ports and self.port_var.get() not in ports:
+            self.port_var.set(ports[0])
 
-    def connect_arduino(self):
-        motor = self.motors[0]
-        if not self.arduino_connected:
-
-            selected_port = self.arduino_port_var.get().strip()
-            if not selected_port:
-                print("No serial port selected!")
-                return
-
-            available_ports = [port.device for port in serial.tools.list_ports.comports()]
-            ports_to_try = []
-            if selected_port and selected_port in available_ports:
-                ports_to_try.append(selected_port)  
-            ports_to_try += [p for p in available_ports if p != selected_port]
-
-            for port in ports_to_try:
-                try:
-                    self.arduino = serial.Serial(port, self.baud_rate, timeout=1, write_timeout=1)
-                    try:
-                        if self.read_id() == "STEPPER":
-                            try:
-                                self.arduino_connected = True
-                                self.arduino_port_var.set(port)
-                                # Read config for both motors
-                                for motor_id in self.motors.keys():
-                                    self.request_config(motor_id)
-                                    cur_angle = self.step_to_angle(motor_id)
-                                    self.motors[motor_id]["goto_angle_var"].set(f"{(cur_angle%360):.1f}")
-                                    if motor_id == 0:
-                                        #print(f"Initial angle = {(self.step_to_angle(0)):.1f}")
-                                        self.wheel_canvas.update_angle(self.step_to_angle(0))
-                                    elif motor_id == 1:
-                                        #print(f"Initial angle: {(cur_angle%360):.1f}")
-                                        if cur_angle == 0:
-                                            self.flip_button1.config(text="Flip Up", bg="green")
-                                        else:
-                                            self.flip_button1.config(text="Flip Down", bg="red")
-                                    #elif motor_id == 2:
-                                    #    if cur_angle == 0:
-                                    #        self.flip_button2.config(text="Flip Up", bg="green")
-                                    #    else:
-                                    #        self.flip_button2.config(text="Flip Down", bg="red")
-                                    #elif motor_id == 3:
-                                    #    self.dial_canvas.draw_pointer(self.step_to_angle(3))
-                                self.request_pwm_config()
-                                self.dial_canvas.draw_pointer(self.convert_pwm_to_angle())                                
-                                self.arduino_connect_button.config(text="Connected", bg="green")
-                                self.config_button1.config(state="normal")
-                                self.config_button2.config(state="normal")
-                                self.config_button4.config(state="normal")
-                                self.flip_button1.config(state='normal')
-                                #self.flip_button2.config(state='normal')
-                                #for key in ["goto_button", "zero_button", "toggle_button"]:
-                                for key in ["goto_button"]:
-                                    if key in motor:  # only touch if it exists
-                                        motor[key].config(state="normal")
-                                break
-                            except Exception as e:
-                                #print(f"Read Configuration failed: {e}")
-                                # Clean up serial connection and exit early
-                                self.arduino.close()
-                                self.arduino = None
-                                self.arduino_connected = False
-                                continue
-                    except Exception as e:
-                        continue
-                except serial.SerialException as e:
-                    #print(f"SerialException: {e}")
-                    continue
-        else:
-            if self.arduino and self.arduino.is_open:
-                try:
-                    self.arduino.close()
-                    #print("Serial port closed.")
-                except Exception as e:
-                    print(f"Error closing serial port: {e}")
-            self.arduino = None
-            self.arduino_connected = False
-            self.arduino_connect_button.config(text="Disconnected", bg="red")
-            self.config_button1.config(state="disabled")
-            self.config_button2.config(state="disabled")
-            self.config_button4.config(state="disabled")
-            self.flip_button1.config(state='disabled')
-            #self.flip_button2.config(state='disabled')
-
-            for key in ["goto_button", "zero_button", "toggle_button"]:
-                if key in motor:
-                    motor[key].config(state="disabled")
-
-    def connect_ag_uc2(self):
-        if not self.ag_uc2_connected:
-            conn = self.piezo.discover_and_open_device(self.ag_uc2_port_var.get())
-            if conn != "":
-                self.ag_uc2_port_var.set(conn)
-                self.ag_uc2_connect_button.config(text="Connected", bg="green")
-                self.ag_uc2_connected = True
-                self.btn_up.config(state="normal")
-                self.btn_down.config(state="normal")
-                self.btn_left.config(state="normal")
-                self.btn_right.config(state="normal")
-                self.btn_stop_xy.config(state="normal")
-        else:
-            self.ag_uc2_connect_button.config(text="Disconnect", bg="red")
-            self.ag_uc2_connected = False
-            self.btn_up.config(state="disabled")
-            self.btn_down.config(state="disabled")
-            self.btn_left.config(state="disabled")
-            self.btn_right.config(state="disabled")
-            self.btn_stop_xy.config(state="disabled")
- 
     def connect_pm16(self):
         deviceCount = c_uint32()
         resourceName = create_string_buffer(1024)
@@ -617,19 +385,93 @@ class NDFilterGUI:
             self.pm16_thread_running = False
             self.tlPM.close()
 
-    def connect_kim001(self):
-        if not self.kim001_connected:
-            self.kim001.connect()
-            self.kim001_connect_button.config(text="Connected", bg="green")
-            self.kim001_connected = True
-            self.btn_z_plus.config(state="normal") 
-            self.btn_z_minus.config(state="normal") 
+    def connect_arduino(self):
+        motor = self.motors[0]
+        if not self.connected:
+
+            selected_port = self.port_var.get().strip()
+            if not selected_port:
+                print("No serial port selected!")
+                return
+
+            available_ports = [port.device for port in serial.tools.list_ports.comports()]
+            ports_to_try = []
+            if selected_port and selected_port in available_ports:
+                ports_to_try.append(selected_port)
+            ports_to_try += [p for p in available_ports if p != selected_port]
+
+            for port in ports_to_try:
+                try:
+                    self.arduino = serial.Serial(port, self.baud_rate, timeout=1, write_timeout=1)
+                    try:
+                        if self.read_id() == "STEPPER":
+                            try:
+                                self.connected = True
+                                self.port_var.set(port)
+                                # Read config for both motors
+                                for motor_id in self.motors.keys():
+                                    self.request_config(motor_id)
+                                    cur_angle = self.step_to_angle(motor_id)
+                                    self.motors[motor_id]["goto_angle_var"].set(f"{(cur_angle%360):.1f}")
+                                    if motor_id == 0:
+                                        self.wheel_canvas.update_angle(self.step_to_angle(0))
+                                    elif motor_id == 1:
+                                        if cur_angle == 0:
+                                            self.flip_button1.config(text="Flip Up", bg="green")
+                                        else:
+                                            self.flip_button1.config(text="Flip Down", bg="red")
+                                    elif motor_id == 2:
+                                        if cur_angle == 0:
+                                            self.flip_button2.config(text="Flip Up", bg="green")
+                                        else:
+                                            self.flip_button2.config(text="Flip Down", bg="red")
+                                    elif motor_id == 3:
+                                        self.dial_canvas.draw_pointer(self.step_to_angle(3))
+                                
+                                self.connect_button.config(text="Connected", bg="green")
+                                self.config_button1.config(state="normal")
+                                self.config_button2.config(state="normal")
+                                self.config_button3.config(state="normal")
+                                self.config_button4.config(state="normal")
+                                self.flip_button1.config(state='normal')
+                                self.flip_button2.config(state='normal')
+                                #for key in ["goto_button", "zero_button", "toggle_button"]:
+                                for key in ["goto_button"]:
+                                    if key in motor:  # only touch if it exists
+                                        motor[key].config(state="normal")
+                                break
+                            except Exception as e:
+                                #print(f"Read Configuration failed: {e}")
+                                # Clean up serial connection and exit early
+                                self.arduino.close()
+                                self.arduino = None
+                                self.connected = False
+                                continue
+                    except Exception as e:
+                        continue
+                except serial.SerialException as e:
+                    #print(f"SerialException: {e}")
+                    continue
         else:
-            self.kim001.disconnect()
-            self.kim001_connect_button.config(text="Disconnect", bg="red")
-            self.kim001_connected = False
-            self.btn_z_plus.config(state="disabled") 
-            self.btn_z_minus.config(state="disabled") 
+            if self.arduino and self.arduino.is_open:
+                try:
+                    self.arduino.close()
+                    #print("Serial port closed.")
+                except Exception as e:
+                    print(f"Error closing serial port: {e}")
+            self.arduino = None
+            self.connected = False
+            self.connect_button.config(text="Disconnected", bg="red")
+            self.config_button1.config(state="disabled")
+            self.config_button2.config(state="disabled")
+            self.config_button3.config(state="disabled")
+            self.config_button4.config(state="disabled")
+            self.flip_button1.config(state='disabled')
+            self.flip_button2.config(state='disabled')
+
+            for key in ["goto_button", "zero_button", "toggle_button"]:
+                if key in motor:
+                    motor[key].config(state="disabled")
 
     def read_id(self):
         cmd = f"ID\n"
@@ -639,13 +481,11 @@ class NDFilterGUI:
         return response
 
     def request_config(self, motor_id):
-        if self.arduino_connected:
-            #print(motor_id)
+        if self.connected:
             cmd = f"READ {motor_id}\n"
             self.arduino.write(cmd.encode())
             self.arduino.flush()
             response = self.arduino.readline().decode().strip()
-            #print(response)
             try:
                 parts = response.split(',')
                 self.motors[motor_id]["gear_ratio"] = float(parts[0])
@@ -656,35 +496,17 @@ class NDFilterGUI:
             except Exception as e:
                 raise RuntimeError(f"Invalid config for motor {motor_id}: {response}") from e
 
-    def request_pwm_config(self):
-        if self.arduino_connected:
-            cmd = f"PWM GET\n"
-            self.arduino.write(cmd.encode())
-            self.arduino.flush()
-            response = self.arduino.readline().decode().strip()
-            #print(response)
-            try:
-                parts = response.split(',')
-                self.pwm_d = float(parts[0])
-                self.pwm_freq = int(parts[1])
-                self.pwm_res = int(parts[2])
-                self.pwm_dmin = int(parts[3])
-                self.pwm_dmax = int(parts[4])
-            except Exception as e:
-                raise RuntimeError(f"Invalid config for pwm: {response}") from e
-
     def on_speed_entry_change(self, motor_id, event=None):
-        if motor_id > -1:
-            motor = self.motors[motor_id]
+        motor = self.motors[motor_id]
+        try:
             val = float(motor["speed_var"].get())
             if 0.0 <= val <= 100.0:
-                motor["speed_slider"].set(val)
-        elif motor_id == -1:
-            val = float(self.ag_uc2_speed_var.get())
-        elif motor_id == -2:
-            val = float(self.kim001_speed_var.get())
-        else:
-            print("Error: Invalid number for speed.")            
+                motor["speed_slider"].set(val)  # Sync slider
+                #self.send_motor_command()
+            else:
+                print("Error: Speed must be between 0.00% and 100.00%")
+        except ValueError:
+            print("Error: Invalid number for speed.")
 
     def toggle_direction(self, motor_id):
         motor = self.motors[motor_id]
@@ -698,7 +520,7 @@ class NDFilterGUI:
             super_method(motor_id, flip, angle)
 
         motor = self.motors[motor_id]
-        if self.arduino_connected and self.arduino:
+        if self.connected and self.arduino:
             try:
                 if flip == False:
                     target_angle = float(motor["goto_angle_var"].get().replace(',', '.')) % 360.00
@@ -739,10 +561,8 @@ class NDFilterGUI:
                         motor["goto_button"].config(text="Moving", bg="red")
                     #motor["toggle_button"].config(state='disabled')
                 self.root.update_idletasks()
-                speed = self.map_speed(motor["speed_var"].get(),self.motor_speed_lower,self.motor_speed_upper)
+                speed = self.map_speed(motor["speed_var"].get())
                 command = f"SET {motor_id} {speed} {direction} {steps_to_move}\n"
-                #print("current_position_steps = ",target_steps)
-                #print("Sending: ",command)
                 self.arduino.write(command.encode())
                 self.arduino.flush()
 
@@ -759,27 +579,19 @@ class NDFilterGUI:
                                 print("Malformed DONE response:", response)
                             break
                     else:
-                        #print("NOT OK")
                         time.sleep(0.05)  # Avoid CPU spin
+
                 motor["current_position_steps"] = target_steps
                 if motor_id == 0:
-                    #print(f"Set step: {self.motors[0]["current_position_steps"]}")
-                    #print(f"Set angle: {self.step_to_angle(0)}")
                     self.wheel_canvas.update_angle(self.step_to_angle(0))
-                    self.request_config(0)
-                    #print(f"Act step: {self.motors[0]["current_position_steps"]}")
-                    #print(f"Act angle: {self.step_to_angle(0)}")
 
                 if flip == True:
                     flip_btn = motor.get("flip_button")
-                    #print(f"Current angle: {self.step_to_angle(motor_id)}")
-                    #if flip_btn and flip_btn.winfo_exists():
-                    if self.step_to_angle(motor_id) == 0 or self.step_to_angle(motor_id) == 180:
-                        flip_btn.config(text="Flip Up", bg="green")
-                        #print("Flip Up")
-                    else:
-                        #print("Flip Down")
-                        flip_btn.config(text="Flip Down", bg="red")  
+                    if flip_btn and flip_btn.winfo_exists():
+                        if self.step_to_angle(motor_id) == 0:
+                            flip_btn.config(text="Flip Up", bg="green")
+                        else:
+                            flip_btn.config(text="Flip Down", bg="red")  
                 else:
                     if "goto_button" in motor and motor["goto_button"].winfo_exists():
                         motor["goto_button"].config(text="Move", bg="orange")
@@ -791,7 +603,7 @@ class NDFilterGUI:
     def zero_angle(self, motor_id):
         motor = self.motors[motor_id]
         motor["current_position_steps"] = 0
-        if self.arduino_connected:
+        if self.connected:
             cmd = f"ZERO {motor_id}\n"
             self.arduino.write(cmd.encode())
             self.arduino.flush()
@@ -801,7 +613,7 @@ class NDFilterGUI:
         if self.arduino and self.arduino.is_open:
             if not motor["motor_running"]:
                 try:
-                    speed = self.map_speed(motor["speed_var"].get(),self.motor_speed_lower,self.motor_speed_upper)
+                    speed = self.map_speed(motor["speed_var"].get())
                     direction = motor["direction"]
                     self.arduino.write(f"SET {motor_id} {speed} {direction}\n".encode())
                     self.arduino.flush()
@@ -862,7 +674,7 @@ class NDFilterGUI:
                 g = float(gear_entry.get())
                 s = float(step_entry.get())
                 h = int(half_entry.get())
-                if self.arduino_connected:
+                if self.connected:
                     cmd = f"WRITE {motor_id} {g} {s} {h}\n"
                     self.arduino.write(cmd.encode())
                     self.arduino.flush()
@@ -875,62 +687,6 @@ class NDFilterGUI:
 
         tk.Button(win, text="Save Config", command=send_config, font=self.arr18).grid(row=3, column=0, columnspan=2, pady=5)
 
-    def open_config_pwm(self):
-        win = tk.Toplevel(self.root)
-        win.title("PWM - Config & Control")
-
-        # Motor control section
-        #control_frame = tk.LabelFrame(win, text="Flip Motor Control", font=self.arr18, padx=10, pady=10)
-        control_frame = tk.LabelFrame(win, font=self.arr18, padx=10, pady=10)
-        control_frame.grid(row=4, column=0, columnspan=2, pady=10, sticky="ew")
-
-        # Config fields
-        tk.Label(win, text="Frequency (Hz):", font=self.arr18).grid(row=0, column=0, sticky="e")
-        freq_entry = tk.Entry(win, font=self.arr18)
-        freq_entry.insert(0, str(self.pwm_freq))
-        freq_entry.grid(row=0, column=1, pady=2)
-
-        tk.Label(win, text="Resolution (Bit):", font=self.arr18).grid(row=1, column=0, sticky="e")
-        res_entry = tk.Entry(win, font=self.arr18)
-        res_entry.insert(0, str(self.pwm_res))
-        res_entry.grid(row=1, column=1, pady=2)
-
-        tk.Label(win, text="Duty Cycle:", font=self.arr18).grid(row=2, column=0, sticky="e")
-        d_entry = tk.Entry(win, font=self.arr18)
-        d_entry.insert(0, f"{self.pwm_d:.2f}")
-        d_entry.grid(row=2, column=1, pady=2)
-
-        tk.Label(win, text="Duty Cycle Min:", font=self.arr18).grid(row=3, column=0, sticky="e")
-        dmin_entry = tk.Entry(win, font=self.arr18)
-        dmin_entry.insert(0, str(self.pwm_dmin))
-        dmin_entry.grid(row=3, column=1, pady=2)
-
-        tk.Label(win, text="Duty Cycle Max:", font=self.arr18).grid(row=4, column=0, sticky="e")
-        dmax_entry = tk.Entry(win, font=self.arr18)
-        dmax_entry.insert(0, str(self.pwm_dmax))
-        dmax_entry.grid(row=4, column=1, pady=2)
-
-        def send_pwm_config():
-            try:
-                f = int(freq_entry.get())
-                r = int(res_entry.get())
-                d = float(d_entry.get())
-                dmin = int(dmin_entry.get())
-                dmax = int(dmax_entry.get())
-                if self.arduino_connected:
-                    cmd = f"PWM SET {d} {f} {r} {dmin} {dmax}\n"
-                    self.arduino.write(cmd.encode())
-                    self.arduino.flush()                
-                self.pwm_freq = f
-                self.pwm_res = r
-                self.pwm_d = d
-                self.pwm_dmin = dmin
-                self.pwm_dmax = dmax
-            except Exception as e:
-                print(f"Invalid config: {e}")
-
-        tk.Button(win, text="Set", command=send_pwm_config, font=self.arr18).grid(row=5, column=0, columnspan=2, pady=5)
-
     # ---- Flip Motor convenience toggle (0/180) ----
     def flip_180(self):
         cur_angle = self.step_to_angle(1)
@@ -940,11 +696,6 @@ class NDFilterGUI:
     def flip_120(self, motor_id):
         cur_angle = self.step_to_angle(motor_id)
         self.go_to_angle(motor_id=motor_id, flip=True, angle = 120.0-cur_angle)
-
-    # ---- Flip Motor convenience toggle (0/120) ----
-    def flip_angle(self, motor_id,ang):
-        cur_angle = self.step_to_angle(motor_id)
-        self.go_to_angle(motor_id=motor_id, flip=True, angle = ang-cur_angle)
 
     def read_pm16_data(self):
         power = c_double()
@@ -974,39 +725,9 @@ class NDFilterGUI:
     def get_steps_per_rev(self, motor_id):
         return self.motors[motor_id]["steps_per_rev"]
 
-    def map_speed(self, percent, lower, upper):
-        #speed = float(10000.0 - (percent * 9999.0 / 100.0))
-        speed = float(lower + (percent * (upper - lower) / 100.0))
-        return int(speed)
-
-    def move_xyz(self, direction, event=None):
-        ag_uc2_voltage = self.map_speed(self.ag_uc2_speed_var.get(),self.ag_uc2_voltage_lower,self.ag_uc2_voltage_upper)
-        ag_uc2_step = self.map_speed(self.ag_uc2_speed_var.get(),self.ag_uc2_step_lower,self.ag_uc2_step_upper)
-        self.kim001_step = self.map_speed(self.kim001_speed_var.get(),self.kim001_step_lower,self.kim001_step_upper)
-
-        if direction == "Y+":
-            self.piezo.set_step_amplitude_positive(1,ag_uc2_voltage)
-            self.piezo.relative_move(1,ag_uc2_step)            
-        elif direction == "Y-":
-            self.piezo.set_step_amplitude_negative(1,ag_uc2_voltage)
-            self.piezo.relative_move(1,-1*ag_uc2_step)  
-        elif direction == "X-":
-            self.piezo.set_step_amplitude_negative(2,ag_uc2_voltage)
-            self.piezo.relative_move(2,-1*ag_uc2_step)  
-        elif direction == "X+":
-            self.piezo.set_step_amplitude_positive(2,ag_uc2_voltage)
-            self.piezo.relative_move(2,ag_uc2_step)  
-        elif direction == "STOPXY":
-            self.piezo.stop_motion(1)
-            self.piezo.stop_motion(2)
-        elif direction == "Z+":
-            new_pos = self.kim001_step
-            self.kim001.move_relative(new_pos)
-        elif direction == "Z-":
-            new_pos = -1*self.kim001_step
-            self.kim001.move_relative(new_pos)
-        else:
-            print(f"Moving {direction}")
+    def map_speed(self, percent):
+        speed = float(10000.0 - (percent * 9999.0 / 100.0))
+        return round(speed)
 
     def format_output(self, input_value):
         if 1e-15 < abs(input_value) <= 1e-12:
@@ -1047,7 +768,7 @@ class NDFilterGUI:
                 self.tlPM.setWavelength(c_double(new_value),TLPM_DEFAULT_CHANNEL)
         except ValueError:
             print("Invalid input for limit Ie value. Please enter a valid number.")
-            
+
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("Dual Motor Control")
