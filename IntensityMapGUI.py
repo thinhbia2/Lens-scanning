@@ -29,14 +29,14 @@ class IntensityMapGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Fluorescence Scanning")
-        self.root.geometry("1400x1024")
+        self.root.geometry("1500x1024")
 
-        self.center_x = 0
-        self.center_y = 0
-        self.acq_time = 100
-        self.pixel = 50
-        self.frame = 10
-        self.count_rate = 0
+        #self.center_x = 0
+        #self.center_y = 0
+        #self.acq_time = 50
+        #self.pixel = 50
+        #self.frame = 10
+        #self.count_rate = 0
 
         self.running_pol = False
         self.is_running = False
@@ -90,7 +90,8 @@ class IntensityMapGUI:
 
     def setup_variables(self):
         self.is_running = False
-        self.dropdown_var = tk.StringVar(value="Height")
+        self.dropdown_var = tk.StringVar(value="Current")
+        self.scan_mode = tk.StringVar(value="Forward") 
         self.cursor_x = tk.StringVar(value="0")
         self.cursor_y = tk.StringVar(value="0")
         self.intensity1 = tk.StringVar(value="0.0")
@@ -98,14 +99,14 @@ class IntensityMapGUI:
         self.center_x = tk.StringVar(value="0")
         self.center_y = tk.StringVar(value="0")
         self.rotation = tk.StringVar(value="0")
-        self.acq_time = tk.IntVar(value=100)
+        self.acq_time = tk.IntVar(value=50)
         self.pixel = tk.IntVar(value=10)
         self.frame = tk.StringVar(value="10n")
 
         self.speed = tk.StringVar(value="10.0")
         self.accel = tk.StringVar(value="10.0")
         self.step_pol = tk.StringVar(value="5.0")
-        self.acq_time_pol = tk.IntVar(value=100)
+        self.acq_time_pol = tk.IntVar(value=50)
         self.cur_angle = tk.StringVar(value="0.0")
         self.goto_angle_var = tk.StringVar(value="0.0")
         self.angles_pol = []
@@ -117,6 +118,12 @@ class IntensityMapGUI:
         self.vmax1 = tk.DoubleVar(value=1.0)
         self.vmin2 = tk.DoubleVar(value=0.0)
         self.vmax2 = tk.DoubleVar(value=1.0)
+
+        self.min1 = 0
+        self.max1 = 0
+        self.min2 = 0
+        self.max2 = 0
+        self.color_scale = 0.25
 
         # Track the active colorbar and dragging state
         self.manual_colorbar1 = False
@@ -266,6 +273,7 @@ class IntensityMapGUI:
         else:
             self.colorbar2.update_normal(self.im2)
         self.canvas.draw_idle()
+        #self.canvas.draw()
         #self.fig.canvas.flush_events()
 
     def on_colorbar_release(self, event):
@@ -342,14 +350,14 @@ class IntensityMapGUI:
         # Dropdown to select between Height and Current
         combobox = ttk.Combobox(status_frame1, textvariable=self.dropdown_var, state="readonly", font=self.arr18, width=7)
         combobox['values'] = ("Height", "Current")  # Set the options in the dropdown
-        combobox.current(0)  # Set default selection to "Height"
+        combobox.current(1)  # Set default selection to "Height"
         combobox.pack(side=tk.LEFT, padx=2)
         
         # Bind combobox selection to update label
         combobox.bind("<<ComboboxSelected>>", self.update_status_label)
 
         # Label that will be updated dynamically based on the dropdown selection
-        self.status_label = tk.Label(status_frame1, text="(m):", font=self.arr18)
+        self.status_label = tk.Label(status_frame1, text="(A):", font=self.arr18)
         self.status_label.pack(side=tk.LEFT)
 
         self.counts_label = tk.Label(status_frame1, textvariable=self.intensity1, font=self.arr18)
@@ -374,23 +382,21 @@ class IntensityMapGUI:
     def update_fitting1(self):
         fitted_data1 = self.fitting_methods.get(self.fitting1.get(), twoDfittings.raw)(self.raw_intensity1)
         vmin = np.min(fitted_data1)
-        vmax = np.max(fitted_data1)
-        diff = 0.5*(vmax - vmin)
+        vmax = np.max(fitted_data1)*(1+self.color_scale)
         self.im1.set_data(fitted_data1)
-        self.im1.set_clim(vmin=vmin-diff, vmax=vmax+diff)
-        self.vmin1.set(vmin-diff)
-        self.vmax1.set(vmax+diff)
+        self.im1.set_clim(vmin=vmin, vmax=vmax)
+        self.vmin1.set(vmin)
+        self.vmax1.set(vmax)
         self.canvas.draw()
 
     def update_fitting2(self):
         fitted_data2 = self.fitting_methods.get(self.fitting2.get(), twoDfittings.raw)(self.raw_intensity2)
         vmin = np.min(fitted_data2)
-        vmax = np.max(fitted_data2)
-        diff = 0.5*(vmax - vmin)
+        vmax = np.max(fitted_data2)*(1+self.color_scale)
         self.im2.set_data(fitted_data2)
-        self.im2.set_clim(vmin=vmin-diff, vmax=vmax+diff)
-        self.vmin2.set(vmin-diff)
-        self.vmax2.set(vmax+diff)
+        self.im2.set_clim(vmin=vmin, vmax=vmax)
+        self.vmin2.set(vmin)
+        self.vmax2.set(vmax)
         self.canvas.draw()
 
     def setup_status_panel2(self, parent_frame):
@@ -419,6 +425,11 @@ class IntensityMapGUI:
         self.create_input(input_frame, "Acq Time (ms)", self.acq_time, 4)
         self.create_input(input_frame, "Pixels", self.pixel, 4)
         self.create_input(input_frame, "Frame Size (m)", self.frame, 4)
+        tk.Label(input_frame, text="Raster", font=self.arr18).pack(side=tk.LEFT)
+        combobox = ttk.Combobox(input_frame, textvariable=self.scan_mode, state="readonly", font=self.arr18, width=7)
+        combobox['values'] = ("Forward", "Backward", "Bidirectional", "Zigzag")  # Set the options in the dropdown
+        combobox.current(0)  # Set default selection to "Height"
+        combobox.pack(side=tk.LEFT, padx=2)
 
     def create_input(self, frame, label, var, width):
         tk.Label(frame, text=label, font=self.arr18).pack(side=tk.LEFT)
@@ -524,8 +535,8 @@ class IntensityMapGUI:
 
     def setup_plot_pol(self):
         self.fig, self.ax = plt.subplots(subplot_kw={'projection': 'polar'},figsize=(7, 7))
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.polarization_frame)
-        self.canvas.get_tk_widget().grid(row=4, column=1, columnspan=6)
+        self.canvas_pol = FigureCanvasTkAgg(self.fig, master=self.polarization_frame)
+        self.canvas_pol.get_tk_widget().grid(row=4, column=1, columnspan=6)
 
     def update_plot(self):
         self.ax.clear()
@@ -547,7 +558,7 @@ class IntensityMapGUI:
         self.ax.set_title("Normalized Polarization", fontsize=18, fontname="Arial", pad=20)
         self.ax.set_yticklabels([]) 
         self.ax.legend(loc='upper right', fontsize=11, frameon=False, bbox_to_anchor=(1.16, 1.1))
-        self.canvas.draw()
+        self.canvas_pol.draw()
 
     def toggle_measurement_pol(self):
         if not self.running_pol:
@@ -570,7 +581,7 @@ class IntensityMapGUI:
         self.norm_intensities_pol = []
         self.norm2_intensities_pol = []
         self.ax.clear()
-        self.canvas.draw()
+        self.canvas_pol.draw()
 
         current_angle = self.prm1.get_position()
         end_angle = current_angle + 360  # You can customize total rotation
@@ -661,7 +672,7 @@ class IntensityMapGUI:
                     writer2 = csv.writer(f2, delimiter='\t')
                     writer2.writerows(np.flipud(self.im1.get_array()))
                 # Save images
-                self.save_image(self.im1.get_array(), self.colormap1.get(), self.vmin1.get(), self.vmax1.get(), filename + "_z.png")
+                self.save_image(np.flipud(self.im1.get_array()), self.colormap1.get(), self.vmin1.get(), self.vmax1.get(), filename + "_z.png")
             elif self.dropdown_var.get() == "Current":
                 with open(filename + '_current.txt', 'w', newline='') as f1:
                     writer1 = csv.writer(f1, delimiter='\t')
@@ -670,7 +681,7 @@ class IntensityMapGUI:
                     writer2 = csv.writer(f2, delimiter='\t')
                     writer2.writerows(np.flipud(self.im1.get_array()))
                 # Save images
-                self.save_image(self.im1.get_array(), self.colormap1.get(), self.vmin1.get(), self.vmax1.get(), filename + "_current.png")
+                self.save_image(np.flipud(self.im1.get_array()), self.colormap1.get(), self.vmin1.get(), self.vmax1.get(), filename + "_current.png")
 
             # Save the second intensity map to a file
             with open(filename + '_photon.txt', 'w', newline='') as f3:
@@ -679,7 +690,7 @@ class IntensityMapGUI:
             with open(filename + '_processed_photon.txt', 'w', newline='') as f4:
                 writer4 = csv.writer(f4, delimiter='\t')
                 writer4.writerows(np.flipud(self.im2.get_array()))
-            self.save_image(self.im2.get_array(), self.colormap2.get(), self.vmin2.get(), self.vmax2.get(), filename + "_photon.png")
+            self.save_image(np.flipud(self.im2.get_array()), self.colormap2.get(), self.vmin2.get(), self.vmax2.get(), filename + "_photon.png")
 
     def save_image(self, data, cmap, vmin, vmax, output_filename):
         fig = plt.figure(figsize=(3.5+0.5, 3.5))
@@ -790,12 +801,44 @@ class IntensityMapGUI:
                     for y in range(pixel):
                         if not self.nanonis_running:
                             break
-                        current_y = start_y - y * resolution  # Move downward
-                        if y % 2 == 0:
-                            x_range = range(pixel)  # Left to Right
+                        current_y = start_y - y * resolution  # Move downward                        
+                        #if y % 2 == 0:                            
+                        #    x_range = range(pixel)  # Left to Right
+                        #else:
+                        #    x_range = range(pixel-1, -1, -1)  # Right to Left (Zig-Zag)
+                         # ----------------------------
+                        # FORWARD ONLY
+                        # ----------------------------
+                        if self.scan_mode.get() == "Forward":
+                            x_range = range(pixel)  # only L -> R
+
+                        # ----------------------------
+                        # BACKWARD ONLY
+                        # ----------------------------
+                        elif self.scan_mode.get() == "Backward":
+                            x_range = range(pixel - 1, -1, -1)  # only R -> L
+
+                        # ----------------------------
+                        # BIDIRECTIONAL (same Y twice)
+                        # ----------------------------
+                        elif self.scan_mode.get() == "Bidirectional":
+                            x_range = range(pixel)
+                            x_rangeb = range(pixel - 1, -1, -1)
+                            #x_range = range(pixel),                    # forward
+                            #    range(pixel - 1, -1, -1)          # backward
+
+                        # ----------------------------
+                        # ZIGZAG (interleaved lines)
+                        # ----------------------------
+                        elif self.scan_mode.get() == "Zigzag":
+                            if y % 2 == 0:
+                                x_range = range(pixel)       # forward
+                            else:
+                                x_range = range(pixel - 1, -1, -1)  # backward
+
                         else:
-                            x_range = range(pixel-1, -1, -1)  # Right to Left (Zig-Zag)
-                        for x in x_range:  # Left to Right
+                            raise ValueError("Unknown scan mode")
+                        for x in x_range:
                             if not self.nanonis_running:
                                #print("Client 1 detected stop signal in x.")
                                 break
@@ -809,17 +852,37 @@ class IntensityMapGUI:
                                     intensity_values.append(zctrl.ZPosGet())
                                 elif self.dropdown_var.get() == "Current":
                                     intensity_values.append(current.Get())
-                            end_time = time.time()
-                            total_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+                            #end_time = time.time()
+                            #total_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
                             if intensity_values:
                                 intensity = sum(intensity_values) / len(intensity_values)  # Mean value
                             else:
                                 intensity = 0
-                            print(f"Time: {total_time_ms:.2f} ms ms. N: {len(intensity_values)}")
+                            #print(f"Time: {total_time_ms:.2f} ms ms. N: {len(intensity_values)}")
                             self.intensity1.set(self.format_output(intensity))
                             self.update_z_plot(x, y, intensity)
                             self.tcp_client2(x, y)
-
+                        if self.scan_mode.get() == "Bidirectional":
+                            for x in x_rangeb:
+                                if not self.nanonis_running:
+                                   #print("Client 1 detected stop signal in x.")
+                                    break
+                                current_x = start_x + x * resolution
+                                cur_x, cur_y = self.rotate_point(current_x, current_y, center_x, center_y, rotation*(-1))
+                                response = folme.XYPosSet(cur_x, cur_y, True)
+                                start_time = time.time()
+                                intensity_values = []
+                                while time.time() - start_time < acq_time:
+                                    if self.dropdown_var.get() == "Height":
+                                        intensity_values.append(zctrl.ZPosGet())
+                                    elif self.dropdown_var.get() == "Current":
+                                        intensity_values.append(current.Get())
+                                #end_time = time.time()
+                                #total_time_ms = (end_time - start_time) * 1000  # Convert to milliseconds
+                                if intensity_values:
+                                    intensity = sum(intensity_values) / len(intensity_values)  # Mean value
+                                else:
+                                    intensity = 0
                     self.start_button.config(text="Start", font=self.arr18, bg="green")
                     self.send_stop_to_picoharp()
                     self.is_running = False
@@ -891,13 +954,28 @@ class IntensityMapGUI:
             fitted_data1 = self.fitting_methods.get(self.fitting1.get(), twoDfittings.raw)(self.raw_intensity1)
             self.im1.set_data(fitted_data1)
             if self.manual_colorbar1 == False:
-                vmin=np.min(fitted_data1)
-                vmax=np.max(fitted_data1)
-                diff = 0.5*(vmax - vmin)                
-                self.im1.set_clim(vmin=vmin-diff, vmax=vmax+diff)
+                if self.scan_mode.get() == "Backward":
+                    if y == 0 and x == frame_size-1:
+                        self.min1 = fitted_data1[y, x]
+                        self.max1 = fitted_data1[y, x]
+                    else:
+                        val = fitted_data1[y, x]
+                        self.min1 = min(self.min1, val)
+                        self.max1 = max(self.max1, val)
+                else:
+                    if y == 0 and x == 0:
+                        self.min1 = fitted_data1[y, x]
+                        self.max1 = fitted_data1[y, x]
+                    else:
+                        val = fitted_data1[y, x]
+                        self.min1 = min(self.min1, val)
+                        self.max1 = max(self.max1, val)
+                vmin=self.min1
+                vmax=self.max1*(1+self.color_scale)
+                self.im1.set_clim(vmin=vmin, vmax=vmax)
                 self.vmin1.set(vmin)
                 self.vmax1.set(vmax)
-            self.canvas.draw()
+            #self.canvas.draw_idle()
 
     def update_intensity_plot(self, x, y, intensity_value):
         if self.is_running:
@@ -912,13 +990,28 @@ class IntensityMapGUI:
             fitted_data2 = self.fitting_methods.get(self.fitting2.get(), twoDfittings.raw)(self.raw_intensity2)
             self.im2.set_data(fitted_data2)
             if self.manual_colorbar2 == False:
-                vmin=np.min(fitted_data2)
-                vmax=np.max(fitted_data2)
-                diff = 0.5*(vmax - vmin)  
-                self.im2.set_clim(vmin=vmin-diff, vmax=vmax+diff)
+                if self.scan_mode.get() == "Backward":
+                    if y == 0 and x == frame_size-1:
+                        self.min2 = fitted_data2[y, x]
+                        self.max2 = fitted_data2[y, x]
+                    else:
+                        val = fitted_data2[y, x]
+                        self.min2 = min(self.min2, val)
+                        self.max2 = max(self.max2, val)
+                else:
+                    if y == 0 and x == 0:
+                        self.min2 = fitted_data2[y, x]
+                        self.max2 = fitted_data2[y, x]
+                    else:
+                        val = fitted_data2[y, x]
+                        self.min2 = min(self.min2, val)
+                        self.max2 = max(self.max2, val)
+                vmin=self.min2
+                vmax=self.max2*(1+self.color_scale)
+                self.im2.set_clim(vmin=vmin, vmax=vmax)
                 self.vmin2.set(vmin)
-                self.vmax2.set(vmax)
-            self.canvas.draw()
+                self.vmax2.set(vmax)           
+            self.canvas.draw_idle()
 
     def on_click(self, event):
         #if event.inaxes:
