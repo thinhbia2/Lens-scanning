@@ -6,6 +6,9 @@ import numpy as np
 #from Newport.Motion.CmdLibAgilis import CmdLibAgilis
 #from Newport.VCPIOLib import VCPIOLib
 from System.Text import StringBuilder
+import serial
+import serial.tools.list_ports
+
 
 class PiezoUC28:
     def __init__(self, channel=1, dll_path=None):
@@ -32,40 +35,46 @@ class PiezoUC28:
         
         #self.discover_and_open_device()
 
-    def discover_and_open_device(self):
+    def discover_and_open_device(self, selected_port):
         """Discover devices and open the first available one."""
         self.oDeviceIO.DiscoverDevices()
-        strDeviceKeyList = np.array ([])
-        strDeviceKeyList = self.oDeviceIO.GetDeviceKeys()
-        n = -1
+        #strDeviceKeyList = np.array ([])
+        #strDeviceKeyList = self.oDeviceIO.GetDeviceKeys()
+        available_ports = [port.device for port in serial.tools.list_ports.comports()]
+        strDeviceKeyList = []
+        if selected_port and selected_port in available_ports:
+            strDeviceKeyList.append(selected_port)  
+        strDeviceKeyList += [p for p in available_ports if p != selected_port]
+        #n = -1
         #self.oCmdLib.SetChannel(self.nChannel)
 
         if not strDeviceKeyList:
             #print("No devices discovered.")
-            return False
+            return ""
         else:
             for oDeviceKey in strDeviceKeyList:
                 strDeviceKey = str(oDeviceKey)
-                n = n + 1
-                strOut = "Device Key[{}] = {}"
+                #n = n + 1
+                #strOut = "Device Key[{}] = {}"
                 #print (strOut.format (n, strDeviceKey))
                 #self.oCmdLib.WriteLog (strOut.format (n, strDeviceKey))
                 if self.oCmdLib.Open(strDeviceKey) == 0:
-                    bStatus = False
+                    bStatus = ""
                     strFirmwareVersion = ""
                     bStatus, strFirmwareVersion = self.oCmdLib.GetFirmwareVersion (strFirmwareVersion)
+                    #print (bStatus)
 
                     # If the firmware version was read
                     if (bStatus) :
-                        strOut = "Device ID[{}] = '{}'\n"
+                        #strOut = "Device ID[{}] = '{}'\n"
                         #print (strOut.format (n, strFirmwareVersion))
                         self.set_remote_mode()
                         self.set_channel()
                         #self.oCmdLib.WriteLog (strOut.format (n, strFirmwareVersion))
-                        return True
+                        return strDeviceKey
                     else :
                         #print ("Could not get the firmware version.\n")
-                        return False
+                        return ""
         #else:
         #    print("Failed to open the device.")
         #    return False
